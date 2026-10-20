@@ -1,0 +1,1 @@
+"""Micro-benchmark harness for comparing loop and vectorised implementations."""
