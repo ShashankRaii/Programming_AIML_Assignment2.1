@@ -1,0 +1,1 @@
+"""Shared helpers: input validation, stable activations, distances, batching."""

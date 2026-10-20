@@ -1,0 +1,1 @@
+"""Descriptive statistics, streaming (Welford) statistics, histograms and quantiles."""
