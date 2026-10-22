@@ -1,7 +1,4 @@
-"""Stable sorting, partial selection and searching for real numeric arrays.
-
-Educational quickselect will be added in a later checkpoint.
-"""
+"""Stable sorting, partial selection and searching for real numeric arrays."""
 
 import operator
 
@@ -336,3 +333,94 @@ def binary_search(sorted_array, x):
     if queries.ndim == 0:
         return int(indices), bool(found)
     return np.asarray(indices, dtype=np.intp), found
+
+
+def quickselect(a, k):
+    """Return the zero-based kth smallest value using explicit quickselect.
+
+    Parameters
+    ----------
+    a : array_like, shape (n,)
+        Nonempty real numeric or boolean data. NaNs rank after all valid
+        values; infinities are valid values. A private working copy preserves
+        caller data, including read-only arrays and non-contiguous views.
+    k : int
+        Zero-based ascending order statistic, with 0 <= k < n. This is an
+        index, unlike topk's count. Booleans are rejected.
+
+    Returns
+    -------
+    value : numpy scalar, shape ()
+        kth smallest value with the input array's inferred dtype. Returns NaN
+        when k falls in the trailing NaN ranks. Equal values are equivalent;
+        the original occurrence/sign of tied zeros is not guaranteed.
+
+    Raises
+    ------
+    TypeError
+        If a is not real numeric/boolean or k is not an integer.
+    ValueError
+        If a is not one-dimensional, is empty/ragged, or k is outside [0, n).
+
+    Complexity
+    ----------
+    Average time O(n), worst-case O(n**2). Additional space O(n) for the private
+    copy and NaN mask; the iterative partition loop uses O(1) workspace and no
+    recursion. A local generator seeded with 42 selects reproducible pivots
+    without affecting global random state. Three-way partitioning processes
+    all values equal to a pivot together, avoiding repeated work on tie groups.
+    This educational algorithm deliberately uses Python partition loops rather
+    than delegating to sorting, np.partition, or np.argpartition.
+
+    Examples
+    --------
+    >>> int(quickselect([3, 1, 4, 1, 5], 2))
+    3
+    >>> bool(np.isnan(quickselect([2.0, np.nan, 1.0], 2)))
+    True
+    """
+    array = check_array(a)
+    if array.ndim != 1:
+        raise ValueError(f"a must have 1 dimension; got shape {array.shape}")
+    if isinstance(k, (bool, np.bool_)):
+        raise TypeError("k must be an integer; got bool")
+    try:
+        k = operator.index(k)
+    except TypeError as exc:
+        raise TypeError("k must be an integer") from exc
+    if array.size == 0:
+        raise ValueError("a must be nonempty; got shape (0,)")
+    if not 0 <= k < array.size:
+        raise ValueError(f"k must satisfy 0 <= k < {array.size}; got {k}")
+
+    valid = ~np.isnan(array)
+    working = array[valid]  # Boolean indexing creates the private working copy.
+    if k >= working.size:
+        return array[~valid][0]
+
+    rng = np.random.default_rng(42)
+    left, right = 0, working.size - 1
+    # Explicit loops expose the educational partition algorithm. NaNs have
+    # already been removed so that every pivot comparison has a total order.
+    while left < right:
+        pivot = working[int(rng.integers(left, right + 1))]
+        lower, current, upper = left, left, right
+        # Invariant: [left, lower) < pivot, [lower, current) == pivot,
+        # (upper, right] > pivot; [current, upper] is still unclassified.
+        while current <= upper:
+            if working[current] < pivot:
+                working[lower], working[current] = working[current], working[lower]
+                lower += 1
+                current += 1
+            elif working[current] > pivot:
+                working[current], working[upper] = working[upper], working[current]
+                upper -= 1  # Inspect the newly swapped-in value next.
+            else:
+                current += 1
+        if k < lower:
+            right = lower - 1
+        elif k > upper:
+            left = upper + 1
+        else:
+            return working[k]
+    return working[left]

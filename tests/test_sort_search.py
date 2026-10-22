@@ -1,9 +1,9 @@
-"""Sorting correctness, stability, dtype, shape and validation tests."""
+"""Sorting, selection and search correctness, dtype and validation tests."""
 
 import numpy as np
 import pytest
 
-from numcompute.sort_search import binary_search, multi_key_sort, stable_sort, topk
+from numcompute.sort_search import binary_search, multi_key_sort, quickselect, stable_sort, topk
 
 
 @pytest.mark.parametrize("axis", [None, 0, 1, -1, -2, np.int64(1)])
@@ -482,3 +482,125 @@ def test_binary_search_rejects_scalar_or_matrix_source_and_ragged_queries():
         binary_search([[1, 2]], 1)
     with pytest.raises(ValueError):
         binary_search([1], [[1], [2, 3]])
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        np.array([3, 1, 4, 1, 5, 0, -2]),
+        np.arange(25),
+        np.arange(25)[::-1],
+        np.random.default_rng(42).integers(-8, 9, size=37),
+        np.array([np.nan, 2, np.inf, -np.inf, 2, np.nan, -3]),
+        np.array([np.nan, np.nan, np.nan]),
+        np.array([True, False, True, False]),
+        np.array([1.5, -0.25, 1.5, 3.0], dtype=np.float32),
+        np.array([-0.0, 0.0, -0.0, 0.0]),
+    ],
+    ids=["duplicates", "sorted", "reversed", "random", "nan-and-infinity",
+         "all-nan", "boolean", "float32", "signed-zeros"],
+)
+def test_quickselect_every_rank_matches_sorted_reference(data):
+    expected = np.sort(data, kind="stable")
+    before = data.copy()
+    for k in range(data.size):
+        result = quickselect(data, k)
+        assert isinstance(result, np.generic)
+        assert result.dtype == data.dtype
+        if np.isnan(expected[k]):
+            assert np.isnan(result)
+        else:
+            assert result == expected[k]
+    np.testing.assert_array_equal(data, before)
+
+
+@pytest.mark.parametrize("dtype", [np.int64, np.uint64])
+def test_quickselect_extreme_integers_preserve_distinct_values(dtype):
+    limits = np.iinfo(dtype)
+    data = np.array([limits.max, 2**53 + 1, limits.min, 2**53, limits.max], dtype=dtype)
+    expected = sorted(int(value) for value in data)
+    for k, value in enumerate(expected):
+        result = quickselect(data, k)
+        assert result.dtype == dtype
+        assert int(result) == value
+
+
+@pytest.mark.parametrize("k", [0, 999, 1999])
+def test_quickselect_large_equal_group_terminates_without_recursion(k):
+    data = np.full(2000, 7, dtype=np.int16)
+    assert quickselect(data, k) == 7
+
+
+def test_quickselect_singleton_and_numpy_integer_index():
+    data = np.array([9], dtype=np.int8)
+    value = quickselect(data, np.int64(0))
+    assert value == 9 and value.dtype == np.int8
+    assert np.isnan(quickselect([np.nan], 0))
+
+
+def test_quickselect_strided_readonly_view_preserves_original_data():
+    original = np.arange(50, dtype=np.int32)
+    before = original.copy()
+    original.flags.writeable = False
+    view = original[::-3]
+    assert not view.flags.c_contiguous
+    for k in [0, view.size // 2, view.size - 1]:
+        assert quickselect(view, k) == sorted(view.tolist())[k]
+    np.testing.assert_array_equal(original, before)
+
+
+def test_quickselect_preserves_python_list_input():
+    data = [7, 2, 1, 8, 2]
+    before = data.copy()
+    assert quickselect(data, 2) == 2
+    assert data == before
+
+
+def test_quickselect_leaves_global_random_state_unchanged():
+    before = np.random.get_state()
+    quickselect([5, 1, 3, 2, 9, 4], 3)
+    after = np.random.get_state()
+    assert before[0] == after[0]
+    np.testing.assert_array_equal(before[1], after[1])
+    assert before[2:] == after[2:]
+
+
+def test_quickselect_value_agrees_with_topk_and_binary_search():
+    data = np.array([np.nan, 3, 7, 3, -1, np.inf])
+    selected = topk(data, 4, largest=False, return_indices=False)
+    value = quickselect(data, 3)
+    assert value == selected[-1] == 7
+    assert binary_search(selected, value) == (3, True)
+
+
+@pytest.mark.parametrize("k", [-1, 3, 100])
+def test_quickselect_reports_out_of_bounds_index_and_length(k):
+    with pytest.raises(ValueError, match=rf"0 <= k < 3; got {k}"):
+        quickselect([1, 2, 3], k)
+
+
+@pytest.mark.parametrize("k", [True, np.bool_(False), 1.0, "1", None])
+def test_quickselect_rejects_noninteger_index(k):
+    with pytest.raises(TypeError, match="k must be an integer"):
+        quickselect([1, 2, 3], k)
+
+
+@pytest.mark.parametrize("data", [[], np.array([], dtype=np.int16)])
+def test_quickselect_rejects_empty_input_with_shape(data):
+    with pytest.raises(ValueError, match=r"nonempty; got shape \(0,\)"):
+        quickselect(data, 0)
+
+
+def test_quickselect_rejects_wrong_shape_and_ragged_input():
+    with pytest.raises(ValueError, match="shape"):
+        quickselect(3, 0)
+    with pytest.raises(ValueError, match=r"1 dimension; got shape \(1, 2\)"):
+        quickselect([[1, 2]], 0)
+    with pytest.raises(ValueError, match="rectangular"):
+        quickselect([[1], [2, 3]], 0)
+
+
+@pytest.mark.parametrize("data", [["1", "2"], [1j], [None]])
+def test_quickselect_rejects_unsupported_value_types(data):
+    with pytest.raises(TypeError, match="real numeric"):
+        quickselect(data, 0)
