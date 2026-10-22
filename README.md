@@ -308,8 +308,7 @@ will report operation, input size, loop time, vectorized time, and speedup; no
 performance claims are made yet.
 
 The final submission will also include `demo/quickstart.ipynb`, a technical report
-of at most four pages, and a demo video of at most five minutes. The submission
-deadline is **26 October 2026, 9:00 AM ACDT**.
+of at most four pages, and a demo video of at most five minutes.
 
 ## Team responsibilities and actual contributions
 
@@ -320,5 +319,5 @@ table does not attribute unfinished work to a teammate.
 | --- | --- | --- |
 | A — Shashank Rai | I/O, preprocessing, pipeline, sample data, demo | Original project scaffold, initial packaging and two package smoke tests, as recorded in the original Git history |
 | B — Rugved Wankhade | Sorting/searching, ranking, statistics, README, testing report section | Checkpoints 1–7: Python/test setup, validation, sorting/searching, ranking, interpolation, batch/streaming statistics, quantiles, histograms, unit/integration tests and documentation, developed with Codex assistance |
-| C — name to confirm | Utilities, metrics, differentiation, benchmarks | No implemented module contribution identified in the reviewed remote snapshot |
+| C — Rejith Jacob | Utilities, metrics, differentiation, benchmarks | No implemented module contribution identified in the reviewed remote snapshot |
 | All | Review, integration, report, video | Pending |
