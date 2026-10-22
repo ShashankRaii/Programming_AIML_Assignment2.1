@@ -1,7 +1,8 @@
-"""Axis-aware descriptive statistics, quantiles and histograms.
+"""Axis-aware descriptive statistics, quantiles, histograms and running moments.
 
 Reductions use NumPy's numeric and warning semantics, with floating calculations
-promoted to at least float64. Streaming statistics are scheduled for checkpoint 7.
+promoted to at least float64. RunningStats combines vectorized batch moments
+using the parallel form of Welford's algorithm without retaining observations.
 """
 
 import operator
@@ -497,3 +498,211 @@ def histogram(data, bins=10, range=None):
     inside = (bin_indices >= 0) & (bin_indices < edges.size - 1)
     counts = np.bincount(bin_indices[inside], minlength=edges.size - 1)
     return counts, edges.copy()
+
+
+class RunningStats:
+    """Accumulate one-dimensional streaming mean and population variance.
+
+    Parameters
+    ----------
+    None
+        Construct an empty accumulator; supply batches through update.
+
+    Attributes
+    ----------
+    count : int
+        Read-only count of observed non-NaN values, initially zero.
+    mean : numpy floating scalar
+        Read-only mean, or NaN for an empty stream without issuing a warning.
+    variance : numpy floating scalar
+        Read-only population variance (ddof=0), or NaN for an empty stream.
+        A singleton or constant stream has variance zero.
+
+    Notes
+    -----
+    Each batch is summarized with centered deviations; summaries are combined
+    with the parallel Welford/Chan formula. State contains three scalars only.
+    Calculations use at least float64, retaining wider floating batches. As
+    with batch floating statistics, converting large integers can round values
+    beyond the accumulator's floating precision. Merge/update results can
+    differ slightly with grouping/order because of floating-point rounding.
+
+    Infinity is rejected, while NaNs are omitted. Arithmetic that cannot keep
+    a finite mean and centered sum of squares raises OverflowError atomically,
+    even if dividing an unrepresentable moment could give a finite variance.
+
+    Complexity
+    ----------
+    Construction/accessors and merges use O(1) time and scalar storage. Updating
+    n values uses O(n) time and O(n) temporary space, with O(1) retained state.
+
+    Examples
+    --------
+    >>> running = RunningStats().update([1, 3, np.nan])
+    >>> running.count, float(running.mean), float(running.variance)
+    (2, 2.0, 1.0)
+    """
+
+    __slots__ = ("_count", "_mean", "_m2")
+
+    def __init__(self):
+        """Initialize empty scalar state in O(1) time and space."""
+        self._count = 0
+        self._mean = np.float64(0)
+        self._m2 = np.float64(0)
+
+    @property
+    def count(self):
+        """Return the non-NaN sample count as a Python int.
+
+        No parameters or exceptions. Time O(1), additional space O(1).
+        Reading the property does not modify state.
+        """
+        return self._count
+
+    @property
+    def mean(self):
+        """Return the floating scalar mean, or NaN for empty state.
+
+        No parameters, warnings or exceptions. Time O(1), additional space O(1).
+        Reading the property does not modify state.
+        """
+        return self._mean if self._count else np.float64(np.nan)
+
+    @property
+    def variance(self):
+        """Return floating scalar population variance (M2/count).
+
+        No parameters, warnings or exceptions. Empty state returns NaN and a
+        singleton returns zero. Time O(1), additional space O(1). No mutation.
+        """
+        return self._m2 / self._count if self._count else np.float64(np.nan)
+
+    def _combine(self, count, average, m2):
+        """Combine snapshots, committing state only after finite checks pass."""
+        if count == 0:
+            return self
+        if self._count == 0:
+            total, combined_mean, combined_m2 = count, average, m2
+        else:
+            total = self._count + count
+            dtype = np.result_type(self._mean.dtype, average.dtype, np.float64)
+            first_mean = dtype.type(self._mean)
+            second_mean = dtype.type(average)
+            first_m2, second_m2 = dtype.type(self._m2), dtype.type(m2)
+            try:
+                with np.errstate(over="raise", invalid="raise"):
+                    delta = second_mean - first_mean
+                    weight = dtype.type(count / total)
+                    combined_mean = first_mean + delta * weight
+                    # Scale before squaring to avoid a needless delta**2
+                    # overflow when the final correction is representable.
+                    correction = delta * (delta * weight) * self._count
+                    combined_m2 = first_m2 + second_m2 + correction
+            except (FloatingPointError, OverflowError) as exc:
+                raise OverflowError("running statistics merge exceeds floating range") from exc
+        if not np.isfinite(combined_mean) or not np.isfinite(combined_m2):
+            raise OverflowError("running statistics require finite mean and centered moment")
+        self._count, self._mean, self._m2 = total, combined_mean, combined_m2
+        return self
+
+    def update(self, batch):
+        """Accumulate a one-dimensional batch using vectorized centered moments.
+
+        Parameters
+        ----------
+        batch : array_like, shape (n,)
+            Real numeric/boolean observations. NaNs are skipped; infinity is
+            rejected. Empty/all-NaN batches are no-ops. Scalars and matrices
+            are rejected; wrap a single observation in a one-element list.
+            Caller data is never modified or retained.
+
+        Returns
+        -------
+        self : RunningStats
+            Updated accumulator for chaining. Only this accumulator is mutated.
+
+        Raises
+        ------
+        TypeError
+            If batch is not real numeric or boolean.
+        ValueError
+            If batch is not one-dimensional, is ragged, or contains infinity.
+        OverflowError
+            If finite batch/combined moments cannot be represented in the
+            accumulation dtype. Existing state is unchanged on any failure.
+
+        Complexity
+        ----------
+        Time O(n); temporary space O(n), retained scalar state O(1). No Python
+        loops over observations; batches are combined by the Welford formula.
+
+        Examples
+        --------
+        >>> running = RunningStats().update([1, 3]).update([5])
+        >>> running.count, float(running.mean)
+        (3, 3.0)
+        """
+        array = check_array(batch, allow_inf=False)
+        if array.ndim != 1:
+            raise ValueError(f"batch must have 1 dimension; got shape {array.shape}")
+        values = array[~np.isnan(array)]
+        if values.size == 0:
+            return self
+        dtype = np.result_type(values.dtype, self._mean.dtype, np.float64)
+        values = values.astype(dtype, copy=False)
+        try:
+            with np.errstate(over="raise", invalid="raise"):
+                # Shift before averaging to retain variation around a large
+                # offset, and avoid overflowing the sum of equal huge values.
+                shifted = values - values[0]
+                shift_mean = np.mean(shifted)
+                average = values[0] + shift_mean
+                deviations = shifted - shift_mean
+                m2 = np.dot(deviations, deviations)
+        except (FloatingPointError, OverflowError) as exc:
+            raise OverflowError("running statistics batch exceeds floating range") from exc
+        if not np.isfinite(average) or not np.isfinite(m2):
+            raise OverflowError("batch must have representable finite mean and centered moment")
+        return self._combine(int(values.size), average, m2)
+
+    def merge(self, other):
+        """Merge another accumulator's summary, leaving that source unchanged.
+
+        Parameters
+        ----------
+        other : RunningStats
+            Source summary. Empty sources are no-ops. Merging into empty state
+            copies scalar moments without sharing mutable state. Merging self
+            with itself counts the observations twice, retaining their mean
+            and population variance.
+
+        Returns
+        -------
+        self : RunningStats
+            Combined accumulator for chaining. The source is not changed,
+            except when source and destination are the same object.
+
+        Raises
+        ------
+        TypeError
+            If other is not a RunningStats instance.
+        OverflowError
+            If combined moments cannot remain finite. Both states are unchanged
+            on failure. Grouping/order can introduce floating-point roundoff.
+
+        Complexity
+        ----------
+        Time O(1); additional space O(1), using scalar snapshots only.
+
+        Examples
+        --------
+        >>> first = RunningStats().update([1, 3])
+        >>> second = RunningStats().update([5, 7])
+        >>> combined = first.merge(second)
+        >>> combined.count, float(combined.mean), float(combined.variance), second.count
+        (4, 4.0, 5.0, 2)
+        """
+        if not isinstance(other, RunningStats):
+            raise TypeError(f"other must be RunningStats; got {type(other).__name__}")
+        return self._combine(other._count, other._mean, other._m2)
