@@ -1,6 +1,6 @@
-"""Stable sorting and row ordering for real numeric arrays.
+"""Stable sorting, partial selection and searching for real numeric arrays.
 
-Selection and searching functions will be added in later checkpoints.
+Educational quickselect will be added in a later checkpoint.
 """
 
 import operator
@@ -148,3 +148,103 @@ def multi_key_sort(X, keys, descending=None):
     # lexsort is stable and uses its last key as primary.
     order = np.lexsort(tuple(sort_columns[::-1]))
     return array[order]
+
+
+def topk(values, k, largest=True, return_indices=True):
+    """Select and order k values using partial partitioning.
+
+    Parameters
+    ----------
+    values : array_like, shape (n,)
+        Real numeric or boolean values. NaNs are ranked after every valid
+        value in either direction; infinities are valid values. Input data and
+        dtype are preserved. Non-contiguous inputs are accepted.
+    k : int
+        Number of values to return, with 0 <= k <= n. Booleans are rejected.
+    largest : bool, default True
+        Return largest values in descending order; False selects smallest
+        values in ascending order. Equal values prefer earlier input indices,
+        both at the selection cutoff and in the returned order.
+    return_indices : bool, default True
+        Also return the selected original input indices when True.
+
+    Returns
+    -------
+    top : ndarray, shape (k,)
+        Independent copy of selected values, with the input dtype. If fewer
+        than k non-NaN values exist, earliest NaNs fill the remaining positions.
+    indices : ndarray of numpy.intp, shape (k,)
+        Returned only when return_indices=True. Satisfies top == values[indices]
+        with NaN-aware equality. Empty input is valid only for k=0.
+
+    Raises
+    ------
+    TypeError
+        If values is not real numeric/boolean, k is not an integer, or either
+        option flag is not boolean.
+    ValueError
+        If values is not one-dimensional or k is outside [0, n].
+
+    Complexity
+    ----------
+    Time O(n + k*log(k + 1)); auxiliary space O(n), including indices and output.
+    Uses np.argpartition to find the cutoff, scans boundary ties in original
+    order, and sorts only the selected non-NaN values. For k=n every value must
+    be ordered. No Python loops over elements are used.
+
+    Examples
+    --------
+    >>> topk([3, 1, 4, 1, 5], 2)
+    (array([5, 4]), array([4, 2]))
+    >>> topk([5, 5, 1], 1, return_indices=False)
+    array([5])
+    """
+    array = check_array(values)
+    if array.ndim != 1:
+        raise ValueError(f"values must have 1 dimension; got shape {array.shape}")
+    if isinstance(k, (bool, np.bool_)):
+        raise TypeError("k must be an integer; got bool")
+    try:
+        k = operator.index(k)
+    except TypeError as exc:
+        raise TypeError("k must be an integer") from exc
+    if not 0 <= k <= array.size:
+        raise ValueError(f"k must satisfy 0 <= k <= {array.size}; got {k}")
+    if not isinstance(largest, (bool, np.bool_)):
+        raise TypeError("largest must be boolean")
+    if not isinstance(return_indices, (bool, np.bool_)):
+        raise TypeError("return_indices must be boolean")
+    if k == 0:
+        indices = np.empty(0, dtype=np.intp)
+        top = array[indices]
+        return (top, indices) if return_indices else top
+
+    nan_mask = np.isnan(array)
+    valid_indices = np.flatnonzero(~nan_mask)
+    valid_values = array[valid_indices]
+    count = min(k, valid_indices.size)
+    if count == valid_indices.size:
+        selected = valid_indices
+    else:
+        position = valid_indices.size - count if largest else count - 1
+        partition = np.argpartition(valid_values, position)
+        cutoff = valid_values[partition[position]]
+        better = valid_values > cutoff if largest else valid_values < cutoff
+        better_indices = valid_indices[better]
+        # argpartition itself is unstable: choose boundary ties independently.
+        tied_indices = valid_indices[valid_values == cutoff][:count - better_indices.size]
+        selected = np.concatenate((better_indices, tied_indices))
+
+    selected_values = array[selected]
+    if largest:
+        # Reverse before AND after a stable sort to keep ties in original order,
+        # without negating data (which would overflow unsigned/minimum integers).
+        order = np.argsort(selected_values[::-1], kind="stable")
+        order = (selected.size - 1 - order)[::-1]
+    else:
+        order = np.argsort(selected_values, kind="stable")
+    indices = selected[order]
+    if count < k:
+        indices = np.concatenate((indices, np.flatnonzero(nan_mask)[:k - count]))
+    top = array[indices]
+    return (top, indices) if return_indices else top
