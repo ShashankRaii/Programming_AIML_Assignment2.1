@@ -143,6 +143,54 @@ test cases). The docstring tests execute eight examples across all five public
 sorting/search functions. All four README Python examples execute successfully.
 The environment is unchanged. No performance measurements are claimed.
 
+## Checkpoint 5 — Tie-aware ranking and percentile interpolation
+
+Fetched `origin` before starting; remote `main` remained at `9eb8c77` with no
+new teammate changes. Work started from a clean `numcompute-branch2`.
+
+- Implemented `rank(data, method='average')` with average, dense, ordinal, min,
+  and max methods. A stable sort plus vectorized tie-group boundaries preserves
+  ordinal tie order and avoids creating false ties between large integers.
+  NaNs retain their positions and do not consume ranks. Output is float64.
+- Implemented `percentile(data, q, interpolation='linear')` with linear, lower,
+  higher, midpoint and nearest methods. Public data is flattened; scalar and
+  vector percentage queries have explicit output shapes. Nearest half-indices
+  round to even. Empty/all-NaN samples warn and return NaN; empty queries return
+  an empty array without warnings. Interpolation uses at least float64 output.
+- Added a shared internal axis-aware kernel for the upcoming statistics
+  quantiles. It uses sorted copies, per-slice non-NaN counts, vectorized index
+  maths, and bound gathering. It does not delegate interpolation to percentile
+  or quantile library functions, and has no Python loops over sample values.
+- Defined infinity handling: exact endpoints/equal infinities are retained,
+  finite-to-infinite interior blends return the infinity, and blends spanning
+  opposite infinities warn and return NaN.
+- Added 26 rank and 71 percentile/kernel cases, including hand-calculated tie
+  results, independent counting references, NumPy finite/NaN references, axes,
+  shapes, missing slices, strides, read-only inputs, and numerical edge cases.
+
+### Debugging evidence
+
+An explicit small-value check exposed a bug in the first interpolation formula:
+for the smallest positive float64 `s`, the midpoint of `[s, 2*s]` returned `s`
+instead of `2*s`. Both linear and midpoint regression tests failed. The cause
+was rounding each weighted endpoint before adding them. Interpolation now uses
+the nearer endpoint and a finite difference when safe; it falls back to convex
+weights when that difference overflows for opposite finite extremes. Both
+regression tests and the finite-overflow tests pass. The corrected feature and
+regression tests were committed together, preserving a passing feature commit.
+
+Validation commands:
+
+```sh
+python -m pytest tests --doctest-modules numcompute/rank.py numcompute/sort_search.py
+git diff --check
+```
+
+Results: **302 unit-test cases and seven docstring tests passed** (309 combined
+test cases). The docstring tests execute 12 examples. All five README Python
+examples execute successfully. Python source lines remain within 100 characters.
+The environment is unchanged. No benchmark results are claimed.
+
 ## Design decisions and limitations
 
 - Numeric validation defaults to `dtype=None` because distinct integers above
@@ -153,13 +201,13 @@ The environment is unchanged. No performance measurements are claimed.
   loop is documented. Core numerical computations will use NumPy operations.
 - Encoders must define their own NaN category and within-feature comparison
   rules; metrics must align label types and reject unusable empty samples.
-- Ranking/statistics and the remaining algorithm implementations, numerical
+- Statistics and the remaining algorithm implementations, numerical
   utilities, benchmarks, the notebook, report, and video materials remain
   scheduled for later checkpoints.
 
 ## Next checkpoint
 
-Checkpoint 5 implements tie-aware ranking and percentile interpolation with tests and
+Checkpoint 6 implements axis-aware statistics, quantiles and histograms with tests and
 docstrings. Before starting it, fetch the remote and inspect new contributions.
 Each checkpoint ends with local commits and a pause for user review. Branch
 publication and the final pull request remain scheduled after final verification.
