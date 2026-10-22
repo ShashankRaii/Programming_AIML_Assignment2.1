@@ -191,6 +191,57 @@ test cases). The docstring tests execute 12 examples. All five README Python
 examples execute successfully. Python source lines remain within 100 characters.
 The environment is unchanged. No benchmark results are claimed.
 
+## Checkpoint 6 — Axis-aware statistics, quantiles and histograms
+
+Fetched `origin` before starting; remote `main` remained at `9eb8c77` and there
+were no new teammate changes. Work started from a clean `numcompute-branch2`.
+
+- Implemented mean, median, standard deviation, variance, minimum and maximum
+  with one integer axis or flattened reduction and an explicit NaN policy.
+  Shared validation rejects unsupported axes/flags, and invalid ddof types or
+  negative corrections. Floating calculations promote to at least float64;
+  extrema retain original dtypes, including large signed/unsigned integers.
+- Preserved NumPy's warning and result semantics for empty/all-NaN slices,
+  non-finite arithmetic and insufficient sample counts. Documented the
+  differences between NaN omission and propagation. Empty extrema raise errors.
+- Implemented quantile probabilities in [0, 1] using the checkpoint 5 kernel,
+  including scalar/vector queries, negative axes, empty shapes and interpolation
+  modes. Probability inputs are now passed directly to the shared kernel.
+- Implemented histograms with NumPy-generated equal-width edges or explicit
+  strictly increasing edges. NaNs are omitted; out-of-range data is excluded;
+  the final right edge is included. Counts use vectorized binary lookup and
+  bincount. Reusing exact binary search protects mixed integer/float boundaries.
+- Added 156 cases: 90 reductions, 34 quantiles and 32 histograms, with NumPy
+  references, hand-calculated values, shape/dtype checks, read-only/strided data,
+  error paths, NaN/inf handling and numerical precision cases.
+
+### Precision evidence
+
+A pre-implementation check showed that converting quantile probabilities to
+percentages and back can change nearest-index selection. For n=4 and q=5/6,
+direct index rounding selects index 2; the percentage roundtrip selects index 3.
+The shared kernel now accepts an internal scale of 1 for probabilities, avoiding
+that conversion. A regression test compares the half-index queries directly to
+NumPy quantile results, and all existing percentile tests still pass.
+
+Histogram tests also exercise observations above 2**53 against float bin edges,
+where rounding the observation before lookup could assign it to the wrong bin.
+The implementation keeps the original numeric values through exact lookup.
+
+Validation command:
+
+```sh
+python -m pytest tests --doctest-modules numcompute -W error
+git diff --check
+```
+
+Results: **458 unit-test cases and 15 docstring tests passed** (473 combined
+test cases), with unexpected warnings treated as errors. Docstrings execute
+20 examples. All six README Python examples execute successfully. Changed
+Python files remain within 100 characters per line. The environment is unchanged.
+No performance measurements are claimed.
+
+
 ## Design decisions and limitations
 
 - Numeric validation defaults to `dtype=None` because distinct integers above
@@ -201,13 +252,13 @@ The environment is unchanged. No benchmark results are claimed.
   loop is documented. Core numerical computations will use NumPy operations.
 - Encoders must define their own NaN category and within-feature comparison
   rules; metrics must align label types and reject unusable empty samples.
-- Statistics and the remaining algorithm implementations, numerical
+- Streaming statistics and the remaining algorithm implementations, numerical
   utilities, benchmarks, the notebook, report, and video materials remain
   scheduled for later checkpoints.
 
 ## Next checkpoint
 
-Checkpoint 6 implements axis-aware statistics, quantiles and histograms with tests and
+Checkpoint 7 implements Welford running statistics and Member B integration checks with
 docstrings. Before starting it, fetch the remote and inspect new contributions.
 Each checkpoint ends with local commits and a pause for user review. Branch
 publication and the final pull request remain scheduled after final verification.
