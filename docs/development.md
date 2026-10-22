@@ -242,6 +242,49 @@ Python files remain within 100 characters per line. The environment is unchanged
 No performance measurements are claimed.
 
 
+## Checkpoint 7 — Welford running statistics and Member B integration
+
+Fetched `origin` before starting; remote `main` remained at `9eb8c77` with no new
+teammate work to integrate. Work started from a clean `numcompute-branch2`.
+
+- Implemented `RunningStats` with three scalar state values and read-only count,
+  mean and population variance. Empty state returns NaN summaries without
+  warnings; singleton variance is zero. Updates accept one-dimensional batches,
+  omit NaNs, reject infinity and leave caller arrays unchanged/unretained.
+- Vectorized centered batch moments combine through the parallel Welford
+  formula. Shifting before computing batch moments avoids summing a large
+  common offset; merging scales the correction before squaring a mean delta.
+- `update` and `merge` return self. Empty inputs are no-ops, merging preserves
+  its source, and self-merge repeats observations. Candidate state is computed
+  and checked before assignment; invalid input or unrepresentable moments leave
+  existing summaries unchanged. Finite-range/roundoff limits are documented.
+- Added 34 running-statistics cases for chunked/batch equivalence, merges,
+  NaNs/empty data, large offsets, finite limits, dtypes, state preservation,
+  read-only input, self-merge and input errors.
+- Added seven Member B workflow cases covering score analysis, missing/empty
+  data, exact large-integer ordering with centered streams, stable multi-key row
+  ordering and per-feature streaming versus axis reductions.
+- Added a Member B requirement-to-test map and an explicit record of numerical
+  limits and outstanding benchmark/demo/report evidence.
+
+Numerical checks include a constant stream at float64's maximum (finite mean,
+zero variance), mean deltas whose square overflows before a valid merge weight
+is applied, and a large-offset stream with a known small variance. Tests also
+confirm atomic rejection when a centered moment itself cannot be represented,
+even where a normalized variance could be finite. No performance claim is made.
+
+Validation command:
+
+```sh
+python -m pytest tests --doctest-modules numcompute -W error
+git diff --check
+```
+
+Results: **499 unit-test cases and 18 docstring tests passed** (517 combined
+cases), with unexpected warnings treated as errors. Docstrings execute 28
+examples; all seven README Python examples execute successfully. Changed Python
+files remain within 100 characters per line. The environment is unchanged.
+
 ## Design decisions and limitations
 
 - Numeric validation defaults to `dtype=None` because distinct integers above
@@ -252,13 +295,13 @@ No performance measurements are claimed.
   loop is documented. Core numerical computations will use NumPy operations.
 - Encoders must define their own NaN category and within-feature comparison
   rules; metrics must align label types and reject unusable empty samples.
-- Streaming statistics and the remaining algorithm implementations, numerical
+- The remaining A/C algorithm implementations, numerical
   utilities, benchmarks, the notebook, report, and video materials remain
   scheduled for later checkpoints.
 
 ## Next checkpoint
 
-Checkpoint 7 implements Welford running statistics and Member B integration checks with
-docstrings. Before starting it, fetch the remote and inspect new contributions.
+Checkpoint 8 implements CSV loading and chunked input with tests and docstrings.
+Before starting it, fetch the remote and inspect new contributions.
 Each checkpoint ends with local commits and a pause for user review. Branch
 publication and the final pull request remain scheduled after final verification.
