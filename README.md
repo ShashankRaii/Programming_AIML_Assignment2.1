@@ -5,10 +5,10 @@ built with Python and NumPy. The project will provide reusable data loading,
 preprocessing, sorting, ranking, statistics, metrics, numerical differentiation,
 and pipeline components.
 
-**Current status: checkpoint 2 completed.** Packaging, shared input validation,
-stable sorting and multi-key row sorting are implemented and tested. Selection,
-searching and the other functional modules remain scheduled for later
-checkpoints. Benchmark results and the end-to-end demo are still pending.
+**Current status: checkpoint 3 completed.** Packaging, shared input validation,
+stable/multi-key sorting, top-k selection and binary search are implemented and
+tested. Educational quickselect and the remaining functional modules are
+scheduled for later checkpoints. Benchmarks and the end-to-end demo are pending.
 
 ## Installation
 
@@ -73,9 +73,39 @@ Complete ties preserve original row order. NaNs sort last in either direction;
 later keys resolve ties between NaNs in earlier keys. Descending sorting uses
 bounded order codes so that unsigned and extreme signed integers remain safe.
 
+Top-k uses partial selection, returns sorted values with original indices, and
+prefers earlier indices when values tie:
+
+```python
+from numcompute.sort_search import binary_search, topk
+
+selected, indices = topk([3, 5, 5, 1], 2)
+assert selected.tolist() == [5, 5]
+assert indices.tolist() == [1, 2]
+assert topk([3, 5, 1], 2, largest=False, return_indices=False).tolist() == [1, 3]
+
+assert binary_search([1, 3, 3, 5], 3) == (1, True)
+positions, found = binary_search([1, 3, 3, 5], [0, 3, 6])
+assert positions.tolist() == [0, 1, 4]
+assert found.tolist() == [False, True, False]
+```
+
+`topk` accepts `k=0` through the full input length and returns NaNs only after
+all valid values. Its returned indices address the supplied input, including
+when that input is a slice. It preserves the value dtype and caller data.
+
+`binary_search` requires an ascending one-dimensional source, with NaNs last.
+It returns the left insertion position plus an existence flag, preserving the
+query shape; scalar queries return Python `int`/`bool` values. NaN queries always
+report no match. The function does not scan the source to validate sortedness.
+For mixed numeric dtypes that would lose integer precision under normal NumPy
+promotion, it uses exact object-array comparisons. That fallback adds linear
+conversion time and memory; ordinary compatible ndarray searches retain binary
+search complexity. Inputs are never modified.
+
 ## API and implementation status
 
-Import validation helpers from `numcompute.utils` and sorting functions from
+Import validation helpers from `numcompute.utils` and sorting/search functions from
 `numcompute.sort_search`.
 
 | Component | Public interface | Status |
@@ -87,7 +117,9 @@ Import validation helpers from `numcompute.utils` and sorting functions from
 | Function validation | `check_callable(function)` | Implemented |
 | Stable sorting | `stable_sort(a, axis=-1)` | Implemented |
 | Multi-key sorting | `multi_key_sort(X, keys, descending=None)` | Implemented |
-| Selection and searching | Top-k and binary search; educational quickselect | Planned: checkpoints 3–4 |
+| Top-k selection | `topk(values, k, largest=True, return_indices=True)` | Implemented |
+| Binary search | `binary_search(sorted_array, x)` | Implemented |
+| Educational quickselect | Zero-based kth-value selection | Planned: checkpoint 4 |
 | Ranking | Tie methods and percentile interpolation | Planned: checkpoint 5 |
 | Statistics | Reductions, quantiles, histogram, streaming statistics | Planned: checkpoints 6–7 |
 | Data loading | CSV and chunked loading | Planned: checkpoint 8 |
@@ -109,13 +141,14 @@ python -m pip check
 git diff --check
 ```
 
-Checkpoint 2 has **114 passing test cases**: 67 sorting cases, 45 validation cases,
-and two original package smoke tests. Both sorting docstring examples also pass.
-Coverage includes tie stability, axis handling, mixed sort directions, column
-priority, large integers, explicit dtype conversion, NaNs, infinities, empty
-arrays, ragged input, shape errors, non-contiguous views, categories, labels,
-callables, and preservation of caller data. Sorting tests include independent
-Python reference comparisons. Later algorithms still need their own tests.
+Checkpoint 3 has **172 passing unit-test cases**: 67 sorting cases, 34 top-k
+cases, 24 binary-search cases, 45 validation cases, and two original package
+smoke tests. Four docstring tests (six examples) also pass. Coverage includes
+stable ties and cutoff selection, extreme k, insertion boundaries, scalar and
+shaped queries, mixed sort directions, large and mixed numeric dtypes, NaNs,
+infinities, empty/ragged inputs, errors, strided/read-only arrays and preservation
+of caller data. Independent Python sorting and bisect references check ordering
+and search results. Later algorithms still need their own tests.
 
 Every feature checkpoint includes tests and docstrings describing parameters,
 return shapes, errors, and time/space complexity. Genuine defects receive
@@ -142,7 +175,7 @@ table does not attribute unfinished work to a teammate.
 | Member | Planned responsibility | Completed contribution |
 | --- | --- | --- |
 | A — Shashank Rai | I/O, preprocessing, pipeline, sample data, demo | Original project scaffold, initial packaging and two package smoke tests, as recorded in the original Git history |
-| B — Rugved Wankhade | Sorting/searching, ranking, statistics, README, testing report section | Checkpoints 1–2: Python requirement/test installation updates, validation helpers, stable/multi-key sorting, tests, README and development record, developed with Codex assistance |
+| B — Rugved Wankhade | Sorting/searching, ranking, statistics, README, testing report section | Checkpoints 1–3: Python/test setup, validation helpers, stable/multi-key sorting, top-k, binary search, tests and documentation, developed with Codex assistance |
 | C — name to confirm | Utilities, metrics, differentiation, benchmarks | No implemented module contribution identified in the reviewed remote snapshot |
 | All | Review, integration, report, video | Pending |
 
