@@ -5,9 +5,9 @@ built with Python and NumPy. The project will provide reusable data loading,
 preprocessing, sorting, ranking, statistics, metrics, numerical differentiation,
 and pipeline components.
 
-**Current status: checkpoint 4 completed.** Packaging, shared input validation,
-and all planned sorting/search APIs are implemented and tested, including
-educational quickselect. Ranking and the remaining functional modules are
+**Current status: checkpoint 5 completed.** Packaging, shared input validation,
+all planned sorting/search APIs, tie-aware ranking and percentile interpolation
+are implemented and tested. Statistics and the remaining functional modules are
 scheduled for later checkpoints. Benchmarks and the end-to-end demo are pending.
 
 ## Installation
@@ -122,10 +122,38 @@ additional space. Python loops are intentional for this educational algorithm.
 Equal values are equivalent; unlike the stable sorting APIs, quickselect does
 not promise a particular original occurrence or sign for tied zeros.
 
+Ranking assigns one-based ranks, with configurable tie handling. Percentiles
+ignore NaNs and support scalar or vector percentage queries:
+
+```python
+from numcompute.rank import percentile, rank
+
+assert rank([30, 10, 10, 20]).tolist() == [4, 1.5, 1.5, 3]
+assert rank([30, 10, 10, 20], method="dense").tolist() == [3, 1, 1, 2]
+assert rank([30, 10, 10, 20], method="ordinal").tolist() == [4, 1, 2, 3]
+assert percentile([10, 20, 30, 40], [0, 25, 50, 100]).tolist() == [10, 17.5, 25, 40]
+```
+
+`rank` takes one-dimensional data and supports average, dense, ordinal, min and
+max tie methods. NaNs remain at their input positions and do not consume ranks.
+Ordinal ties retain input order. All ranks are float64; input values are sorted
+in their own dtype to avoid creating false ties between distinct large integers.
+
+`percentile` flattens numeric input and accepts scalar or one-dimensional `q`
+in 0–100. It supports linear, lower, higher, midpoint and nearest interpolation;
+nearest rounds exact half-indices to even. Results use at least float64, so
+large integer outputs may round to floating precision. Empty/all-NaN samples
+produce NaN with a RuntimeWarning; empty queries produce an empty array silently.
+Exact infinite endpoints and equal infinities are retained. An interior blend
+between opposite infinities is undefined and returns NaN with a RuntimeWarning.
+Interpolation handles finite extremes and subnormal midpoint rounding without
+modifying inputs. The shared internal kernel also supports one reduction axis,
+ready for the upcoming statistics quantile API.
+
 ## API and implementation status
 
-Import validation helpers from `numcompute.utils` and sorting/search functions from
-`numcompute.sort_search`.
+Import validation helpers from `numcompute.utils`, sorting/search functions from
+`numcompute.sort_search`, and ranking/percentile functions from `numcompute.rank`.
 
 | Component | Public interface | Status |
 | --- | --- | --- |
@@ -139,7 +167,8 @@ Import validation helpers from `numcompute.utils` and sorting/search functions f
 | Top-k selection | `topk(values, k, largest=True, return_indices=True)` | Implemented |
 | Binary search | `binary_search(sorted_array, x)` | Implemented |
 | Educational quickselect | `quickselect(a, k)` | Implemented |
-| Ranking | Tie methods and percentile interpolation | Planned: checkpoint 5 |
+| Ranking | `rank(data, method='average')` | Implemented |
+| Percentiles | `percentile(data, q, interpolation='linear')` | Implemented |
 | Statistics | Reductions, quantiles, histogram, streaming statistics | Planned: checkpoints 6–7 |
 | Data loading | CSV and chunked loading | Planned: checkpoint 8 |
 | Preprocessing | Scalers, imputer, one-hot encoder | Planned: checkpoint 9 |
@@ -155,22 +184,27 @@ Import validation helpers from `numcompute.utils` and sorting/search functions f
 python -m pytest
 python -m pytest tests/test_validation.py
 python -m pytest tests/test_sort_search.py
-python -m pytest --doctest-modules numcompute/sort_search.py
+python -m pytest tests/test_rank.py
+python -m pytest --doctest-modules numcompute/sort_search.py numcompute/rank.py
 python -m pip check
 git diff --check
 ```
 
-Checkpoint 4 has **205 passing unit-test cases**: 67 sorting cases, 34 top-k
-cases, 24 binary-search cases, 33 quickselect cases, 45 validation cases, and two
-original package smoke tests. Five docstring tests (eight examples) also pass.
-Coverage includes
+Checkpoint 5 has **302 passing unit-test cases**: 67 sorting cases, 34 top-k
+cases, 24 binary-search cases, 33 quickselect cases, 26 rank cases, 71 percentile
+cases, 45 validation cases, and two original package smoke tests. Seven docstring
+tests (12 examples) also pass. Coverage includes
 stable ties and cutoff selection, extreme k, insertion boundaries, scalar and
 shaped queries, mixed sort directions, large and mixed numeric dtypes, NaNs,
 infinities, empty/ragged inputs, errors, strided/read-only arrays and preservation
 of caller data. Independent Python sorting and bisect references check ordering
 and search results. Quickselect tests check every rank on reference arrays,
 large equal-value groups, global random state preservation, and agreement with
-top-k and binary search. Later algorithms still need their own tests.
+top-k and binary search. Rank tests include hand-calculated and independent
+counting references. Percentile tests compare with NumPy references, exercise the
+shared axis kernel, and cover empty/all-NaN slices, infinity handling, finite
+overflow and subnormal midpoint regression cases. Later algorithms need their
+own tests.
 
 Every feature checkpoint includes tests and docstrings describing parameters,
 return shapes, errors, and time/space complexity. Genuine defects receive
@@ -197,7 +231,7 @@ table does not attribute unfinished work to a teammate.
 | Member | Planned responsibility | Completed contribution |
 | --- | --- | --- |
 | A — Shashank Rai | I/O, preprocessing, pipeline, sample data, demo | Original project scaffold, initial packaging and two package smoke tests, as recorded in the original Git history |
-| B — Rugved Wankhade | Sorting/searching, ranking, statistics, README, testing report section | Checkpoints 1–4: Python/test setup, validation helpers, stable/multi-key sorting, top-k, binary search, educational quickselect, tests and documentation, developed with Codex assistance |
+| B — Rugved Wankhade | Sorting/searching, ranking, statistics, README, testing report section | Checkpoints 1–5: Python/test setup, validation, sorting/searching, quickselect, tie-aware ranking, percentile interpolation, tests and documentation, developed with Codex assistance |
 | C — name to confirm | Utilities, metrics, differentiation, benchmarks | No implemented module contribution identified in the reviewed remote snapshot |
 | All | Review, integration, report, video | Pending |
 
