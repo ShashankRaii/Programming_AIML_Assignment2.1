@@ -5,9 +5,9 @@ built with Python and NumPy. The project will provide reusable data loading,
 preprocessing, sorting, ranking, statistics, metrics, numerical differentiation,
 and pipeline components.
 
-**Current status: checkpoint 3 completed.** Packaging, shared input validation,
-stable/multi-key sorting, top-k selection and binary search are implemented and
-tested. Educational quickselect and the remaining functional modules are
+**Current status: checkpoint 4 completed.** Packaging, shared input validation,
+and all planned sorting/search APIs are implemented and tested, including
+educational quickselect. Ranking and the remaining functional modules are
 scheduled for later checkpoints. Benchmarks and the end-to-end demo are pending.
 
 ## Installation
@@ -103,6 +103,25 @@ promotion, it uses exact object-array comparisons. That fallback adds linear
 conversion time and memory; ordinary compatible ndarray searches retain binary
 search complexity. Inputs are never modified.
 
+Quickselect returns a single zero-based kth smallest value:
+
+```python
+from numcompute.sort_search import quickselect
+
+values = [3, 1, 4, 1, 5]
+assert int(quickselect(values, 2)) == 3
+assert values == [3, 1, 4, 1, 5]
+```
+
+`quickselect(a, k)` requires `0 <= k < len(a)` and returns a NumPy scalar with
+the input's inferred dtype. NaNs rank after every valid value, so selecting a
+trailing NaN rank returns NaN. It uses explicit iterative three-way partitioning
+on a private copy, with reproducible local pivots and no change to global random
+state. Average time is O(n), worst-case time is O(n²), and the copy requires O(n)
+additional space. Python loops are intentional for this educational algorithm.
+Equal values are equivalent; unlike the stable sorting APIs, quickselect does
+not promise a particular original occurrence or sign for tied zeros.
+
 ## API and implementation status
 
 Import validation helpers from `numcompute.utils` and sorting/search functions from
@@ -119,7 +138,7 @@ Import validation helpers from `numcompute.utils` and sorting/search functions f
 | Multi-key sorting | `multi_key_sort(X, keys, descending=None)` | Implemented |
 | Top-k selection | `topk(values, k, largest=True, return_indices=True)` | Implemented |
 | Binary search | `binary_search(sorted_array, x)` | Implemented |
-| Educational quickselect | Zero-based kth-value selection | Planned: checkpoint 4 |
+| Educational quickselect | `quickselect(a, k)` | Implemented |
 | Ranking | Tie methods and percentile interpolation | Planned: checkpoint 5 |
 | Statistics | Reductions, quantiles, histogram, streaming statistics | Planned: checkpoints 6–7 |
 | Data loading | CSV and chunked loading | Planned: checkpoint 8 |
@@ -141,14 +160,17 @@ python -m pip check
 git diff --check
 ```
 
-Checkpoint 3 has **172 passing unit-test cases**: 67 sorting cases, 34 top-k
-cases, 24 binary-search cases, 45 validation cases, and two original package
-smoke tests. Four docstring tests (six examples) also pass. Coverage includes
+Checkpoint 4 has **205 passing unit-test cases**: 67 sorting cases, 34 top-k
+cases, 24 binary-search cases, 33 quickselect cases, 45 validation cases, and two
+original package smoke tests. Five docstring tests (eight examples) also pass.
+Coverage includes
 stable ties and cutoff selection, extreme k, insertion boundaries, scalar and
 shaped queries, mixed sort directions, large and mixed numeric dtypes, NaNs,
 infinities, empty/ragged inputs, errors, strided/read-only arrays and preservation
 of caller data. Independent Python sorting and bisect references check ordering
-and search results. Later algorithms still need their own tests.
+and search results. Quickselect tests check every rank on reference arrays,
+large equal-value groups, global random state preservation, and agreement with
+top-k and binary search. Later algorithms still need their own tests.
 
 Every feature checkpoint includes tests and docstrings describing parameters,
 return shapes, errors, and time/space complexity. Genuine defects receive
@@ -175,7 +197,7 @@ table does not attribute unfinished work to a teammate.
 | Member | Planned responsibility | Completed contribution |
 | --- | --- | --- |
 | A — Shashank Rai | I/O, preprocessing, pipeline, sample data, demo | Original project scaffold, initial packaging and two package smoke tests, as recorded in the original Git history |
-| B — Rugved Wankhade | Sorting/searching, ranking, statistics, README, testing report section | Checkpoints 1–3: Python/test setup, validation helpers, stable/multi-key sorting, top-k, binary search, tests and documentation, developed with Codex assistance |
+| B — Rugved Wankhade | Sorting/searching, ranking, statistics, README, testing report section | Checkpoints 1–4: Python/test setup, validation helpers, stable/multi-key sorting, top-k, binary search, educational quickselect, tests and documentation, developed with Codex assistance |
 | C — name to confirm | Utilities, metrics, differentiation, benchmarks | No implemented module contribution identified in the reviewed remote snapshot |
 | All | Review, integration, report, video | Pending |
 
