@@ -8,6 +8,7 @@ import operator
 
 import numpy as np
 
+from .rank import _percentile
 from .utils import check_array
 
 
@@ -337,3 +338,60 @@ def maximum(data, axis=None, ignore_nan=True):
     3
     """
     return _reduce(data, "max", axis, ignore_nan)
+
+
+def quantile(data, q, axis=None, interpolation="linear"):
+    """Return NaN-aware quantiles using the shared percentile calculation.
+
+    Parameters
+    ----------
+    data : array_like, shape (...,)
+        Real numeric or boolean data with at least one dimension. NaNs are
+        omitted independently in each reduced slice. Inputs are never modified.
+    q : real scalar or one-dimensional array_like, shape (m,)
+        Finite probabilities in [0, 1], unlike percentile's [0, 100]. Numeric
+        strings and booleans are rejected. Empty queries return empty output.
+    axis : int or None, default None
+        None flattens data; an integer, including a negative index, removes one
+        axis. Tuples and boolean axes are rejected.
+    interpolation : {'linear', 'lower', 'higher', 'midpoint', 'nearest'}, default 'linear'
+        Interpolate sorted indices (count-1)*q. Nearest rounds half-indices to
+        even. Reuses rank.percentile's kernel without rounding q through percent.
+
+    Returns
+    -------
+    result : numpy floating scalar or ndarray
+        Scalar q returns the input shape with the reduction axis removed (a
+        scalar for axis=None). Vector q prepends dimension m to that shape.
+        Output uses at least float64; large integer outputs can round. Empty
+        queries preserve a zero-length query dimension and do not warn.
+
+    Raises
+    ------
+    TypeError
+        If data/q is unsupported or axis/interpolation has an invalid type.
+    ValueError
+        If data is scalar/ragged, q is non-finite, not scalar/1-D or outside
+        [0, 1], the axis is out of bounds, or interpolation is unsupported.
+
+    Warns
+    -----
+    RuntimeWarning
+        Empty/all-NaN reduced slices return NaN with a warning. Interior blends
+        between opposite infinities also warn and return NaN. Other infinity
+        handling and numerical safeguards match rank.percentile.
+
+    Complexity
+    ----------
+    Time O(N log(L + 1) + m*S); auxiliary space O(N + m*S), where L is the
+    reduced axis length, S is the remaining slice count and N=L*S. With
+    axis=None, L=N and S=1. The sorting and interpolation are vectorized.
+
+    Examples
+    --------
+    >>> quantile([[1, 2], [3, 4]], [0, 0.5, 1], axis=0)
+    array([[1., 2.],
+           [2., 3.],
+           [3., 4.]])
+    """
+    return _percentile(data, q, interpolation=interpolation, axis=axis, _scale=1)
