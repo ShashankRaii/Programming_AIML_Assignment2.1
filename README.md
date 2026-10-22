@@ -322,8 +322,3 @@ table does not attribute unfinished work to a teammate.
 | B — Rugved Wankhade | Sorting/searching, ranking, statistics, README, testing report section | Checkpoints 1–7: Python/test setup, validation, sorting/searching, ranking, interpolation, batch/streaming statistics, quantiles, histograms, unit/integration tests and documentation, developed with Codex assistance |
 | C — name to confirm | Utilities, metrics, differentiation, benchmarks | No implemented module contribution identified in the reviewed remote snapshot |
 | All | Review, integration, report, video | Pending |
-
-The agreed completion plan also allows Member B's development work to cover
-unfinished A/C modules. This table will be updated for actual contributions as
-they arrive. Local checkpoint commits are developed on `numcompute-branch2`;
-the completed branch will be pushed for review after final verification.
