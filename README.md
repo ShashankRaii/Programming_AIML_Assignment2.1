@@ -5,10 +5,10 @@ built with Python and NumPy. The project will provide reusable data loading,
 preprocessing, sorting, ranking, statistics, metrics, numerical differentiation,
 and pipeline components.
 
-**Current status: checkpoint 1 completed.** Packaging and shared input validation
-are implemented and tested. The other functional modules are placeholders;
-their APIs, examples, benchmark results, and demo will be documented as they are
-implemented. This README does not claim the whole assignment is complete.
+**Current status: checkpoint 2 completed.** Packaging, shared input validation,
+stable sorting and multi-key row sorting are implemented and tested. Selection,
+searching and the other functional modules remain scheduled for later
+checkpoints. Benchmark results and the end-to-end demo are still pending.
 
 ## Installation
 
@@ -54,9 +54,29 @@ and unsupported objects. Label validation rejects missing/non-finite labels and
 requires one dimension. Individual algorithms will define stricter requirements
 where needed.
 
+Sorting returns independent copies, preserving the input dtype and caller data:
+
+```python
+from numcompute.sort_search import multi_key_sort, stable_sort
+
+assert stable_sort([3, 1, 2, 1]).tolist() == [1, 1, 2, 3]
+rows = [[2, 1], [1, 2], [1, 3]]
+ordered = multi_key_sort(rows, keys=[0, 1], descending=[False, True])
+assert ordered.tolist() == [[1, 3], [1, 2], [2, 1]]
+```
+
+`stable_sort` supports integer axes and `axis=None` to flatten.
+`multi_key_sort` takes a numeric matrix and column keys in priority order, with
+the first listed key primary. Negative column indices are accepted; repeated
+columns are rejected. Directions are a boolean sequence with one flag per key.
+Complete ties preserve original row order. NaNs sort last in either direction;
+later keys resolve ties between NaNs in earlier keys. Descending sorting uses
+bounded order codes so that unsigned and extreme signed integers remain safe.
+
 ## API and implementation status
 
-Import the implemented helpers from `numcompute.utils`.
+Import validation helpers from `numcompute.utils` and sorting functions from
+`numcompute.sort_search`.
 
 | Component | Public interface | Status |
 | --- | --- | --- |
@@ -65,7 +85,9 @@ Import the implemented helpers from `numcompute.utils`.
 | Categorical validation | `check_categories(X, ensure_2d=True)` | Implemented |
 | Label validation | `check_labels(y)` | Implemented |
 | Function validation | `check_callable(function)` | Implemented |
-| Sorting and searching | Stable/multi-key sort, top-k, quickselect, binary search | Planned: checkpoints 2–4 |
+| Stable sorting | `stable_sort(a, axis=-1)` | Implemented |
+| Multi-key sorting | `multi_key_sort(X, keys, descending=None)` | Implemented |
+| Selection and searching | Top-k and binary search; educational quickselect | Planned: checkpoints 3–4 |
 | Ranking | Tie methods and percentile interpolation | Planned: checkpoint 5 |
 | Statistics | Reductions, quantiles, histogram, streaming statistics | Planned: checkpoints 6–7 |
 | Data loading | CSV and chunked loading | Planned: checkpoint 8 |
@@ -81,15 +103,19 @@ Import the implemented helpers from `numcompute.utils`.
 ```sh
 python -m pytest
 python -m pytest tests/test_validation.py
+python -m pytest tests/test_sort_search.py
+python -m pytest --doctest-modules numcompute/sort_search.py
 python -m pip check
 git diff --check
 ```
 
-Checkpoint 1 has **47 passing test cases**: 45 validation cases and two original
-package smoke tests. Coverage includes large integers, explicit dtype conversion,
-NaNs, infinities, empty arrays, ragged input, shape errors, non-contiguous views,
-categories, labels, callables, and preservation of caller data. These tests cover
-the current implementation; later algorithms still need their own tests.
+Checkpoint 2 has **114 passing test cases**: 67 sorting cases, 45 validation cases,
+and two original package smoke tests. Both sorting docstring examples also pass.
+Coverage includes tie stability, axis handling, mixed sort directions, column
+priority, large integers, explicit dtype conversion, NaNs, infinities, empty
+arrays, ragged input, shape errors, non-contiguous views, categories, labels,
+callables, and preservation of caller data. Sorting tests include independent
+Python reference comparisons. Later algorithms still need their own tests.
 
 Every feature checkpoint includes tests and docstrings describing parameters,
 return shapes, errors, and time/space complexity. Genuine defects receive
@@ -116,7 +142,7 @@ table does not attribute unfinished work to a teammate.
 | Member | Planned responsibility | Completed contribution |
 | --- | --- | --- |
 | A — Shashank Rai | I/O, preprocessing, pipeline, sample data, demo | Original project scaffold, initial packaging and two package smoke tests, as recorded in the original Git history |
-| B — Rugved Wankhade | Sorting/searching, ranking, statistics, README, testing report section | Checkpoint 1: Python requirement/test installation updates, validation helpers and tests, README and development record, developed with Codex assistance |
+| B — Rugved Wankhade | Sorting/searching, ranking, statistics, README, testing report section | Checkpoints 1–2: Python requirement/test installation updates, validation helpers, stable/multi-key sorting, tests, README and development record, developed with Codex assistance |
 | C — name to confirm | Utilities, metrics, differentiation, benchmarks | No implemented module contribution identified in the reviewed remote snapshot |
 | All | Review, integration, report, video | Pending |
 
