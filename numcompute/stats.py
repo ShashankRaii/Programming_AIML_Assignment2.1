@@ -82,8 +82,8 @@ def mean(data, axis=None, ignore_nan=True):
     Warns
     -----
     RuntimeWarning
-        Empty/all-NaN slices warn and return NaN. NumPy warnings and NaN/inf
-        results apply to non-finite arithmetic and insufficient degrees of freedom.
+        Empty reduced slices warn and return NaN. With ignore_nan=True,
+        all-NaN slices also warn and return NaN. Other arithmetic follows NumPy.
 
     Complexity
     ----------
@@ -129,8 +129,8 @@ def median(data, axis=None, ignore_nan=True):
     Warns
     -----
     RuntimeWarning
-        Empty/all-NaN slices warn and return NaN. NumPy warnings and NaN/inf
-        results apply to non-finite arithmetic and insufficient degrees of freedom.
+        Empty reduced slices warn and return NaN. With ignore_nan=True,
+        all-NaN slices also warn and return NaN. Other arithmetic follows NumPy.
 
     Complexity
     ----------
@@ -181,8 +181,9 @@ def std(data, axis=None, ddof=0, ignore_nan=True):
     Warns
     -----
     RuntimeWarning
-        Empty/all-NaN slices warn and return NaN. NumPy warnings and NaN/inf
-        results apply to non-finite arithmetic and insufficient degrees of freedom.
+        With ignore_nan=True, empty/all-NaN slices or count<=ddof warn and
+        return NaN. With ignore_nan=False, insufficient count warns and may
+        return NaN or infinity. Non-finite arithmetic follows NumPy.
 
     Complexity
     ----------
@@ -233,8 +234,9 @@ def var(data, axis=None, ddof=0, ignore_nan=True):
     Warns
     -----
     RuntimeWarning
-        Empty/all-NaN slices warn and return NaN. NumPy warnings and NaN/inf
-        results apply to non-finite arithmetic and insufficient degrees of freedom.
+        With ignore_nan=True, empty/all-NaN slices or count<=ddof warn and
+        return NaN. With ignore_nan=False, insufficient count warns and may
+        return NaN or infinity. Non-finite arithmetic follows NumPy.
 
     Complexity
     ----------
@@ -280,7 +282,8 @@ def minimum(data, axis=None, ignore_nan=True):
     Warns
     -----
     RuntimeWarning
-        All-NaN slices warn and return NaN. Empty reduced slices raise ValueError.
+        With ignore_nan=True, all-NaN slices warn and return NaN. Empty reduced
+        slices raise ValueError.
 
     Complexity
     ----------
@@ -326,7 +329,8 @@ def maximum(data, axis=None, ignore_nan=True):
     Warns
     -----
     RuntimeWarning
-        All-NaN slices warn and return NaN. Empty reduced slices raise ValueError.
+        With ignore_nan=True, all-NaN slices warn and return NaN. Empty reduced
+        slices raise ValueError.
 
     Complexity
     ----------

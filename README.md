@@ -5,10 +5,11 @@ built with Python and NumPy. The project will provide reusable data loading,
 preprocessing, sorting, ranking, statistics, metrics, numerical differentiation,
 and pipeline components.
 
-**Current status: checkpoint 5 completed.** Packaging, shared input validation,
+**Current status: checkpoint 6 completed.** Packaging, shared input validation,
 all planned sorting/search APIs, tie-aware ranking and percentile interpolation
-are implemented and tested. Statistics and the remaining functional modules are
-scheduled for later checkpoints. Benchmarks and the end-to-end demo are pending.
+are implemented and tested, alongside descriptive statistics, quantiles and
+histograms. Streaming statistics and the remaining modules are scheduled for
+later checkpoints. Benchmarks and the end-to-end demo are pending.
 
 ## Installation
 
@@ -148,12 +149,51 @@ Exact infinite endpoints and equal infinities are retained. An interior blend
 between opposite infinities is undefined and returns NaN with a RuntimeWarning.
 Interpolation handles finite extremes and subnormal midpoint rounding without
 modifying inputs. The shared internal kernel also supports one reduction axis,
-ready for the upcoming statistics quantile API.
+used by the statistics quantile API.
+
+Statistics use explicit axes, NaN policies and output shapes:
+
+```python
+import numpy as np
+from numcompute import stats
+
+data = np.array([[1.0, np.nan], [3.0, 5.0]])
+assert stats.mean(data, axis=0).tolist() == [2, 5]
+assert stats.var(data, axis=0).tolist() == [1, 0]
+assert stats.quantile(data, [0, 0.5, 1], axis=0).tolist() == [[1, 5], [2, 5], [3, 5]]
+counts, edges = stats.histogram([0, 1, 2, 3, np.nan], bins=[0, 1, 3])
+assert counts.tolist() == [1, 3]
+assert edges.tolist() == [0, 1, 3]
+```
+
+`mean`, `median`, `std`, `var`, `minimum` and `maximum` accept `axis=None` or a
+single integer axis, including negative indices. None reduces all values to a
+scalar; an integer removes that dimension. `ignore_nan=True` is the default;
+False propagates NaNs in affected slices. Floating calculations use at least
+float64; extrema retain the input dtype. Variance/std accept a nonnegative
+integer `ddof`, with 0 for population and 1 for sample estimates. NumPy's warning
+and NaN/infinity behaviour applies to undefined reductions and insufficient
+sample counts. Empty minimum/maximum reductions raise ValueError.
+
+`quantile` accepts probabilities in 0–1, with the same interpolation and NaN
+rules as `percentile`. A vector query prepends its length to the remaining axis
+shape; a scalar query simply removes the reduction axis. The shared kernel
+accepts probabilities directly to avoid nearest-index rounding errors from a
+probability-to-percentage roundtrip.
+
+`histogram` flattens data and drops NaNs. Choose a positive integer bin count or
+strictly increasing explicit edges. Bins include their left edges; the final bin
+also includes its right edge. A finite range controls automatic edges; explicit
+edges take precedence. Infinity in data needs a finite range or explicit edges.
+Empty/all-NaN data yields zero counts, with automatic default edges spanning
+0–1. Bin lookup reuses exact numeric comparisons from binary search and avoids
+silently rounding large integer observations onto floating bin boundaries.
 
 ## API and implementation status
 
 Import validation helpers from `numcompute.utils`, sorting/search functions from
-`numcompute.sort_search`, and ranking/percentile functions from `numcompute.rank`.
+`numcompute.sort_search`, ranking/percentile functions from `numcompute.rank`,
+and statistical functions from `numcompute.stats`.
 
 | Component | Public interface | Status |
 | --- | --- | --- |
@@ -169,7 +209,10 @@ Import validation helpers from `numcompute.utils`, sorting/search functions from
 | Educational quickselect | `quickselect(a, k)` | Implemented |
 | Ranking | `rank(data, method='average')` | Implemented |
 | Percentiles | `percentile(data, q, interpolation='linear')` | Implemented |
-| Statistics | Reductions, quantiles, histogram, streaming statistics | Planned: checkpoints 6–7 |
+| Descriptive statistics | `mean`, `median`, `std`, `var`, `minimum`, `maximum` | Implemented |
+| Quantiles | `quantile(data, q, axis=None, interpolation='linear')` | Implemented |
+| Histograms | `histogram(data, bins=10, range=None)` | Implemented |
+| Streaming statistics | Welford running statistics and batch merge | Planned: checkpoint 7 |
 | Data loading | CSV and chunked loading | Planned: checkpoint 8 |
 | Preprocessing | Scalers, imputer, one-hot encoder | Planned: checkpoint 9 |
 | Pipelines | Pipeline and feature union | Planned: checkpoint 10 |
@@ -185,15 +228,18 @@ python -m pytest
 python -m pytest tests/test_validation.py
 python -m pytest tests/test_sort_search.py
 python -m pytest tests/test_rank.py
-python -m pytest --doctest-modules numcompute/sort_search.py numcompute/rank.py
+python -m pytest tests/test_stats.py
+python -m pytest tests --doctest-modules numcompute -W error
 python -m pip check
 git diff --check
 ```
 
-Checkpoint 5 has **302 passing unit-test cases**: 67 sorting cases, 34 top-k
+Checkpoint 6 has **458 passing unit-test cases**: 67 sorting cases, 34 top-k
 cases, 24 binary-search cases, 33 quickselect cases, 26 rank cases, 71 percentile
-cases, 45 validation cases, and two original package smoke tests. Seven docstring
-tests (12 examples) also pass. Coverage includes
+cases, 90 descriptive-statistics cases, 34 quantile cases, 32 histogram cases,
+45 validation cases, and two original package smoke tests. Fifteen docstring
+tests (20 examples) also pass. The full run treats unexpected warnings as errors.
+Coverage includes
 stable ties and cutoff selection, extreme k, insertion boundaries, scalar and
 shaped queries, mixed sort directions, large and mixed numeric dtypes, NaNs,
 infinities, empty/ragged inputs, errors, strided/read-only arrays and preservation
@@ -203,8 +249,10 @@ large equal-value groups, global random state preservation, and agreement with
 top-k and binary search. Rank tests include hand-calculated and independent
 counting references. Percentile tests compare with NumPy references, exercise the
 shared axis kernel, and cover empty/all-NaN slices, infinity handling, finite
-overflow and subnormal midpoint regression cases. Later algorithms need their
-own tests.
+overflow and subnormal midpoint regression cases. Statistics tests cover scalar,
+matrix and 3-D reduction shapes, NaN policies, degrees of freedom, empty slices,
+quantile probability rounding, bin-edge inclusion, and precise large integer
+histogram boundaries. Later algorithms need their own tests.
 
 Every feature checkpoint includes tests and docstrings describing parameters,
 return shapes, errors, and time/space complexity. Genuine defects receive
@@ -231,7 +279,7 @@ table does not attribute unfinished work to a teammate.
 | Member | Planned responsibility | Completed contribution |
 | --- | --- | --- |
 | A — Shashank Rai | I/O, preprocessing, pipeline, sample data, demo | Original project scaffold, initial packaging and two package smoke tests, as recorded in the original Git history |
-| B — Rugved Wankhade | Sorting/searching, ranking, statistics, README, testing report section | Checkpoints 1–5: Python/test setup, validation, sorting/searching, quickselect, tie-aware ranking, percentile interpolation, tests and documentation, developed with Codex assistance |
+| B — Rugved Wankhade | Sorting/searching, ranking, statistics, README, testing report section | Checkpoints 1–6: Python/test setup, validation, sorting/searching, ranking, interpolation, descriptive statistics, quantiles, histograms, tests and documentation, developed with Codex assistance |
 | C — name to confirm | Utilities, metrics, differentiation, benchmarks | No implemented module contribution identified in the reviewed remote snapshot |
 | All | Review, integration, report, video | Pending |
 
