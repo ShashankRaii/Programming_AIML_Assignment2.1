@@ -232,3 +232,119 @@ def test_quantile_rejects_invalid_axis_shape_and_method():
         stats.quantile([1, 2], 0.5, axis=True)
     with pytest.raises(ValueError, match="unsupported interpolation"):
         stats.quantile([1, 2], 0.5, interpolation="unknown")
+
+
+@pytest.mark.parametrize("bins,bounds", [(1, None), (10, None), (4, (-1, 1)),
+                                          (4, (0, 0)), ([-2, -0.5, 0, 2], None)])
+def test_histogram_random_nan_data_matches_numpy(bins, bounds):
+    data = np.random.default_rng(42).normal(size=(20, 10))
+    data[::3, 2] = np.nan
+    expected_counts, expected_edges = np.histogram(data[~np.isnan(data)], bins=bins, range=bounds)
+    counts, edges = stats.histogram(data, bins=bins, range=bounds)
+    np.testing.assert_array_equal(counts, expected_counts)
+    np.testing.assert_array_equal(edges, expected_edges)
+
+
+def test_histogram_edges_are_left_inclusive_with_final_right_edge_included():
+    data = [-1, 0, 1, 2, 3, 4, np.nan]
+    counts, edges = stats.histogram(data, bins=[0, 1, 3])
+    np.testing.assert_array_equal(counts, [1, 3])
+    np.testing.assert_array_equal(edges, [0, 1, 3])
+    assert counts.sum() == 4
+
+
+@pytest.mark.parametrize("data", [[], [np.nan, np.nan]])
+def test_histogram_empty_or_all_nan_has_zero_counts_and_default_range(data):
+    counts, edges = stats.histogram(data, bins=2)
+    np.testing.assert_array_equal(counts, [0, 0])
+    np.testing.assert_array_equal(edges, [0, 0.5, 1])
+
+
+def test_histogram_singleton_constant_and_boolean_inputs_match_numpy():
+    for data in [[3], [7, 7, 7], [False, True, True]]:
+        source = np.asarray(data, dtype=float)
+        expected = np.histogram(source, bins=3)
+        actual = stats.histogram(data, bins=3)
+        np.testing.assert_array_equal(actual[0], expected[0])
+        np.testing.assert_array_equal(actual[1], expected[1])
+
+
+def test_histogram_infinity_requires_bounds_but_explicit_infinite_edges_are_valid():
+    data = [-np.inf, -1, 0, 1, np.inf, np.nan]
+    with pytest.raises(ValueError, match="finite range or explicit edges"):
+        stats.histogram(data)
+    counts, _ = stats.histogram(data, bins=2, range=(-1, 1))
+    np.testing.assert_array_equal(counts, [1, 2])
+    counts, edges = stats.histogram(data, bins=[-np.inf, 0, np.inf])
+    np.testing.assert_array_equal(counts, [2, 3])
+    np.testing.assert_array_equal(edges, [-np.inf, 0, np.inf])
+
+
+@pytest.mark.parametrize("dtype", [np.int64, np.uint64])
+def test_histogram_preserves_extreme_integer_bin_boundaries(dtype):
+    limit = np.iinfo(dtype)
+    edges = np.array([limit.min, 2**53, 2**53 + 1, limit.max], dtype=dtype)
+    counts, actual_edges = stats.histogram(edges, bins=edges)
+    np.testing.assert_array_equal(counts, [1, 1, 2])
+    np.testing.assert_array_equal(actual_edges, edges)
+    assert actual_edges.dtype == dtype
+
+
+def test_histogram_mixed_large_integer_float_boundaries_do_not_round_into_wrong_bins():
+    values = np.array([2**53 + 3, 2**53 + 4, 2**53 + 5], dtype=np.int64)
+    edges = np.array([2**53, 2**53 + 4, 2**53 + 8], dtype=float)
+    counts, _ = stats.histogram(values, bins=edges)
+    np.testing.assert_array_equal(counts, [1, 2])
+
+
+def test_histogram_readonly_strides_and_explicit_edges_are_not_modified_or_shared():
+    data = np.arange(20)
+    bins = np.array([0, 5, 10, 19])
+    data.flags.writeable = bins.flags.writeable = False
+    counts, edges = stats.histogram(data[::-2], bins=bins)
+    np.testing.assert_array_equal(counts, np.histogram(data[::-2], bins=bins)[0])
+    assert not np.shares_memory(edges, bins)
+    assert not np.shares_memory(counts, data)
+    np.testing.assert_array_equal(data, np.arange(20))
+    np.testing.assert_array_equal(bins, [0, 5, 10, 19])
+
+
+def test_histogram_explicit_edges_take_precedence_over_range():
+    counts, edges = stats.histogram([0, 1, 2], bins=[0, 1, 2], range=(10, 20))
+    np.testing.assert_array_equal(counts, [1, 2])
+    np.testing.assert_array_equal(edges, [0, 1, 2])
+
+
+@pytest.mark.parametrize("bins", [0, -1])
+def test_histogram_rejects_nonpositive_bin_count(bins):
+    with pytest.raises(ValueError, match="bins must be positive"):
+        stats.histogram([1], bins=bins)
+
+
+@pytest.mark.parametrize("bins", [True, 2.5, "auto", [True, False], ["0", "1"]])
+def test_histogram_rejects_unsupported_bin_types(bins):
+    with pytest.raises(TypeError, match="bins must"):
+        stats.histogram([1], bins=bins)
+
+
+@pytest.mark.parametrize("bins", [[], [1], [[0, 1]], [0, 0, 1], [1, 0], [0, np.nan, 1]])
+def test_histogram_rejects_bad_edge_shapes_and_order(bins):
+    with pytest.raises(ValueError, match="bin edges must"):
+        stats.histogram([1], bins=bins)
+
+
+@pytest.mark.parametrize("bounds", [(1, 0), (0, np.inf), (np.nan, 1)])
+def test_histogram_rejects_nonfinite_or_reversed_range(bounds):
+    with pytest.raises(ValueError, match="finite ordered bounds"):
+        stats.histogram([1], range=bounds)
+
+
+def test_histogram_rejects_invalid_range_shape_and_unsupported_data():
+    with pytest.raises(ValueError, match=r"range must have shape \(2,\)"):
+        stats.histogram([1], range=[0, 1, 2])
+    with pytest.raises(TypeError, match="range must contain real numeric"):
+        stats.histogram([1], range=["0", "1"])
+    with pytest.raises(TypeError, match="real numeric"):
+        stats.histogram(["1"])
+    with pytest.raises(ValueError, match="shape"):
+        stats.histogram(1)
