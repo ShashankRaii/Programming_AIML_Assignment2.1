@@ -248,3 +248,91 @@ def topk(values, k, largest=True, return_indices=True):
         indices = np.concatenate((indices, np.flatnonzero(nan_mask)[:k - count]))
     top = array[indices]
     return (top, indices) if return_indices else top
+
+
+def binary_search(sorted_array, x):
+    """Return left insertion positions and exact existence flags.
+
+    Parameters
+    ----------
+    sorted_array : array_like, shape (n,)
+        Real numeric or boolean values, already sorted ascending with NaNs at
+        the end. Empty arrays, duplicates, infinities and strides are accepted.
+        Sorting is a precondition: no linear sortedness check is performed.
+    x : real numeric scalar or array_like, shape (...,)
+        Queries, including empty/multidimensional arrays. NaN queries insert
+        before existing NaNs (or after all values if there are no NaNs) and
+        always have found=False. Numeric dtypes may differ between inputs.
+
+    Returns
+    -------
+    index : int or ndarray of numpy.intp, shape matching x
+        Leftmost matching index, or insertion position in [0, n] if absent.
+        Scalar queries return a Python int.
+    found : bool or ndarray of bool, shape matching x
+        Whether the queried numeric value exists. Scalar queries return a
+        Python bool. Large integers are compared exactly even when combining
+        signed/unsigned or integer/floating dtypes. Inputs are never modified.
+
+    Raises
+    ------
+    TypeError
+        If either input contains unsupported nonnumeric or complex values.
+    ValueError
+        If sorted_array is not one-dimensional or either input is ragged.
+
+    Complexity
+    ----------
+    For existing ndarrays, time O(m*log(n + 1) + m) and auxiliary space O(m) for
+    m queries. Converting input sequences adds O(n + m) time/space. When NumPy's
+    common dtype cannot represent an integer dtype exactly, an object-array
+    fallback adds O(n + m) time/space to preserve exact Python numeric
+    comparisons. Search itself uses np.searchsorted in all cases.
+
+    Examples
+    --------
+    >>> binary_search([1, 3, 3, 5], 3)
+    (1, True)
+    >>> binary_search([1, 3, 3, 5], [0, 3, 6])
+    (array([0, 1, 4]), array([False,  True, False]))
+    """
+    array = check_array(sorted_array)
+    if array.ndim != 1:
+        raise ValueError(f"sorted_array must have 1 dimension; got shape {array.shape}")
+    queries = np.asarray(x)
+    # Reuse numeric validation while allowing scalar queries and preserving
+    # their original shape in the returned results.
+    check_array(queries.reshape(-1))
+    comparison_array, comparison_queries = array, queries
+    common_dtype = np.result_type(array.dtype, queries.dtype)
+    if common_dtype.kind == "f":
+        precision = np.finfo(common_dtype).nmant + 1
+        # This inspects only two dtype descriptors, never loops over samples.
+        needs_exact_comparison = any(
+            dtype.kind in "iu" and np.iinfo(dtype).bits - (dtype.kind == "i") > precision
+            for dtype in (array.dtype, queries.dtype)
+        )
+        if needs_exact_comparison:
+            # Python int/float comparisons avoid lossy float promotion of int64
+            # and uint64. Remove trailing NaNs before object search because
+            # Python NaN comparisons do not define NumPy's NaNs-last ordering.
+            end = int(np.searchsorted(array, np.nan)) if array.dtype.kind == "f" else array.size
+            comparison_array = array[:end].astype(object)
+            comparison_queries = queries.astype(object)
+
+    indices = np.searchsorted(comparison_array, comparison_queries, side="left")
+    query_nan = np.isnan(queries)
+    if comparison_array.dtype.kind == "O":
+        indices = np.where(query_nan, comparison_array.size, indices)
+    found = np.zeros(queries.shape, dtype=bool)
+    if comparison_array.size:
+        # Bound the gather before indexing, including insertion positions n.
+        candidates = np.minimum(indices, comparison_array.size - 1)
+        found = (
+            (indices < comparison_array.size)
+            & np.equal(comparison_array[candidates], comparison_queries)
+            & ~query_nan
+        )
+    if queries.ndim == 0:
+        return int(indices), bool(found)
+    return np.asarray(indices, dtype=np.intp), found
