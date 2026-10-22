@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from numcompute.sort_search import multi_key_sort, stable_sort, topk
+from numcompute.sort_search import binary_search, multi_key_sort, stable_sort, topk
 
 
 @pytest.mark.parametrize("axis", [None, 0, 1, -1, -2, np.int64(1)])
@@ -343,3 +343,142 @@ def test_topk_rejects_wrong_shape_nonnumeric_and_nonzero_k_on_empty():
         topk(["1"], 1)
     with pytest.raises(ValueError, match="0 <= k <= 0"):
         topk([], 1)
+
+
+@pytest.mark.parametrize(
+    "query,expected",
+    [(0, (0, False)), (1, (0, True)), (3, (1, True)), (4, (3, False)), (9, (4, False))],
+)
+def test_binary_search_scalar_boundaries_and_duplicate_leftmost(query, expected):
+    result = binary_search([1, 3, 3, 5], query)
+    assert result == expected
+    assert type(result[0]) is int and type(result[1]) is bool
+
+
+def test_binary_search_empty_source_scalar_and_shaped_queries():
+    assert binary_search([], 4) == (0, False)
+    queries = np.array([[np.nan, -np.inf], [0, np.inf]])
+    positions, found = binary_search([], queries)
+    np.testing.assert_array_equal(positions, np.zeros((2, 2), dtype=np.intp))
+    np.testing.assert_array_equal(found, np.zeros((2, 2), dtype=bool))
+
+
+def test_binary_search_empty_queries_preserve_shape_and_output_types():
+    queries = np.empty((2, 0, 3))
+    positions, found = binary_search([1, 2], queries)
+    assert positions.shape == found.shape == queries.shape
+    assert positions.dtype == np.intp and found.dtype == bool
+
+
+def test_binary_search_singleton_and_all_equal_source():
+    assert binary_search([7], 7) == (0, True)
+    positions, found = binary_search([4, 4, 4], [3, 4, 5])
+    np.testing.assert_array_equal(positions, [0, 0, 3])
+    np.testing.assert_array_equal(found, [False, True, False])
+
+
+def test_binary_search_vector_queries_match_independent_bisect_reference():
+    from bisect import bisect_left
+
+    rng = np.random.default_rng(42)
+    data = np.sort(rng.integers(-20, 21, size=150))
+    queries = rng.integers(-25, 26, size=(5, 6))
+    expected_positions = np.array([bisect_left(data.tolist(), int(x)) for x in queries.flat])
+    expected_found = np.array([int(x) in data.tolist() for x in queries.flat])
+    positions, found = binary_search(data, queries)
+    np.testing.assert_array_equal(positions, expected_positions.reshape(queries.shape))
+    np.testing.assert_array_equal(found, expected_found.reshape(queries.shape))
+
+
+def test_binary_search_nan_queries_insert_left_but_are_never_matches():
+    data = np.array([-np.inf, 1, 1, np.inf, np.nan, np.nan])
+    queries = np.array([np.nan, -np.inf, 1, np.inf, 2])
+    positions, found = binary_search(data, queries)
+    np.testing.assert_array_equal(positions, [4, 0, 1, 3, 3])
+    np.testing.assert_array_equal(found, [False, True, True, True, False])
+    assert binary_search([np.nan, np.nan], np.nan) == (0, False)
+    assert binary_search([1.0, 2.0], np.nan) == (2, False)
+
+
+@pytest.mark.parametrize("dtype", [np.int64, np.uint64])
+def test_binary_search_distinguishes_large_same_dtype_integers(dtype):
+    limits = np.iinfo(dtype)
+    data = np.array([limits.min, 2**53, 2**53 + 1, limits.max], dtype=dtype)
+    positions, found = binary_search(data, data)
+    np.testing.assert_array_equal(positions, [0, 1, 2, 3])
+    assert found.all()
+
+
+def test_binary_search_mixed_float_queries_do_not_round_integer_source():
+    data = np.array([2**53 + 1, 2**53 + 3, 2**53 + 4], dtype=np.int64)
+    queries = np.array([2**53, 2**53 + 2, 2**53 + 4], dtype=np.float64)
+    positions, found = binary_search(data, queries)
+    np.testing.assert_array_equal(positions, [0, 1, 2])
+    np.testing.assert_array_equal(found, [False, False, True])
+    assert binary_search([2**53 + 1], float(2**53)) == (0, False)
+
+
+def test_binary_search_mixed_integer_queries_do_not_round_into_float_matches():
+    data = np.array([float(2**53), float(2**53 + 2), np.inf, np.nan])
+    queries = np.array([2**53 + 1, 2**53 + 2], dtype=np.int64)
+    positions, found = binary_search(data, queries)
+    np.testing.assert_array_equal(positions, [1, 1])
+    np.testing.assert_array_equal(found, [False, True])
+
+
+def test_binary_search_signed_unsigned_boundaries_are_exact():
+    unsigned = np.array([2**63, 2**63 + 1], dtype=np.uint64)
+    assert binary_search(unsigned, np.int64(2**63 - 1)) == (0, False)
+    signed = np.array([-1, 2**63 - 1], dtype=np.int64)
+    assert binary_search(signed, np.uint64(2**63)) == (2, False)
+
+
+def test_binary_search_fallback_preserves_nan_insertion_and_infinity_matches():
+    data = np.array([2**53 + 1], dtype=np.int64)
+    queries = np.array([-np.inf, float(2**53), np.inf, np.nan])
+    positions, found = binary_search(data, queries)
+    np.testing.assert_array_equal(positions, [0, 0, 1, 1])
+    assert not found.any()
+    positions, found = binary_search([1.0, np.inf, np.nan], np.array([1, 2], dtype=np.int64))
+    np.testing.assert_array_equal(positions, [0, 1])
+    np.testing.assert_array_equal(found, [True, False])
+
+
+def test_binary_search_all_nan_float_source_accepts_integer_queries():
+    positions, found = binary_search([np.nan, np.nan], np.array([1, 2], dtype=np.int64))
+    np.testing.assert_array_equal(positions, [0, 0])
+    assert not found.any()
+
+
+def test_binary_search_supports_boolean_and_fractional_queries():
+    assert binary_search([False, True, True], True) == (1, True)
+    assert binary_search([1, 3, 5], 2.5) == (1, False)
+    assert binary_search([-0.0, 0.0], 0.0) == (0, True)
+
+
+def test_binary_search_strided_readonly_inputs_are_not_modified():
+    original = np.arange(20)
+    original.flags.writeable = False
+    data = original[::2]
+    queries = original[1::3]
+    data_before, query_before = data.copy(), queries.copy()
+    positions, found = binary_search(data, queries)
+    np.testing.assert_array_equal(positions, np.searchsorted(data, queries))
+    np.testing.assert_array_equal(found, queries % 2 == 0)
+    np.testing.assert_array_equal(data, data_before)
+    np.testing.assert_array_equal(queries, query_before)
+
+
+@pytest.mark.parametrize("source,query", [(["1"], 1), ([1], "1"), ([1], 1j), ([1], None)])
+def test_binary_search_rejects_unsupported_types(source, query):
+    with pytest.raises(TypeError, match="real numeric"):
+        binary_search(source, query)
+
+
+def test_binary_search_rejects_scalar_or_matrix_source_and_ragged_queries():
+    with pytest.raises(ValueError, match="shape"):
+        binary_search(1, 1)
+    with pytest.raises(ValueError, match=r"1 dimension; got shape \(1, 2\)"):
+        binary_search([[1, 2]], 1)
+    with pytest.raises(ValueError):
+        binary_search([1], [[1], [2, 3]])
