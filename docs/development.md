@@ -106,6 +106,43 @@ in the combined run). The docstring tests execute six examples across the four
 sorting/search APIs. All three README Python examples also execute successfully.
 The environment is unchanged. No benchmark results are claimed.
 
+## Checkpoint 4 — Educational quickselect
+
+Fetched `origin` before starting; remote `main` remained at `9eb8c77` with no
+new teammate changes. The working tree on `numcompute-branch2` was clean.
+
+- Implemented `quickselect(a, k)` for a zero-based ascending order statistic.
+  The function validates the one-dimensional nonempty input and index before
+  partitioning a private copy, preserving dtype and caller data.
+- NaNs occupy the final ranks, matching the module's ascending ordering. They
+  are separated before pivot comparisons; infinities remain valid values.
+- Explicit iterative Dutch-flag partitioning creates less-than, equal-to, and
+  greater-than pivot groups, then visits only the group containing k. Complete
+  tie groups need only one partition pass. There is no recursion or delegation
+  to a sort/partition library implementation.
+- Pivots come from a local NumPy generator seeded with 42, leaving global random
+  state unchanged. Documented average time is O(n), worst-case time O(n²), and
+  additional storage O(n) for the private copy/mask. Educational Python loops
+  are intentional. Tied zeros have no guaranteed original occurrence/sign.
+- Added 33 cases covering every rank for sorted, reversed, duplicate, random,
+  boolean, float32, signed-zero, NaN and infinity reference arrays; extreme
+  signed/unsigned integers; a 2,000-element equal group; empty and invalid
+  inputs; list/read-only/strided input preservation; and global RNG state.
+- Checked consistency with top-k selection and binary search and added working
+  README and docstring examples.
+
+Validation commands:
+
+```sh
+python -m pytest tests --doctest-modules numcompute/sort_search.py
+git diff --check
+```
+
+Results: **205 unit-test cases and five docstring tests passed** (210 combined
+test cases). The docstring tests execute eight examples across all five public
+sorting/search functions. All four README Python examples execute successfully.
+The environment is unchanged. No performance measurements are claimed.
+
 ## Design decisions and limitations
 
 - Numeric validation defaults to `dtype=None` because distinct integers above
@@ -116,13 +153,13 @@ The environment is unchanged. No benchmark results are claimed.
   loop is documented. Core numerical computations will use NumPy operations.
 - Encoders must define their own NaN category and within-feature comparison
   rules; metrics must align label types and reject unusable empty samples.
-- Educational quickselect, the remaining algorithm implementations, numerical
+- Ranking/statistics and the remaining algorithm implementations, numerical
   utilities, benchmarks, the notebook, report, and video materials remain
   scheduled for later checkpoints.
 
 ## Next checkpoint
 
-Checkpoint 4 implements educational quickselect with tests and
+Checkpoint 5 implements tie-aware ranking and percentile interpolation with tests and
 docstrings. Before starting it, fetch the remote and inspect new contributions.
 Each checkpoint ends with local commits and a pause for user review. Branch
 publication and the final pull request remain scheduled after final verification.
