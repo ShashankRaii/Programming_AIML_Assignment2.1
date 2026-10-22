@@ -69,6 +69,43 @@ Results: **114 unit-test cases passed**, plus **two docstring examples passed**.
 The README sorting example was also executed successfully. The environment is
 unchanged from checkpoint 1. No performance measurements are claimed.
 
+## Checkpoint 3 — Top-k selection and binary search
+
+Fetched `origin` before starting; remote `main` remained at `9eb8c77` with no
+new teammate changes. Work continued from a clean `numcompute-branch2`.
+
+- Added `topk(values, k, largest=True, return_indices=True)`. Partial partitioning
+  identifies a numeric cutoff; a separate scan chooses the earliest boundary
+  ties. Only the selected values are sorted. NaNs fill output positions only
+  after all valid values. The implementation supports k=0 and k=n, preserves
+  dtypes, avoids negating original values, and returns original input indices.
+- Added `binary_search(sorted_array, x)` returning left insertion positions and
+  existence flags for scalar or shaped queries. NaNs never count as matches;
+  out-of-range insertion positions are guarded before gathering candidate data.
+- Investigated mixed-dtype precision before implementation. NumPy's usual
+  int64/float64 or int64/uint64 promotion can round distinct integers into equal
+  floats. Search uses an exact Python numeric comparison fallback through
+  NumPy object arrays for those dtype combinations. Trailing NaNs are excluded
+  from object search to preserve NaNs-last insertion semantics. The extra
+  linear conversion cost is documented, rather than claiming logarithmic total
+  time for that path. Compatible numeric ndarray searches avoid that conversion.
+- Added 34 top-k and 24 binary-search test cases. Coverage includes independent
+  stable Python sort/bisect references, cutoff ties, signed zero, extreme
+  integers, signed/unsigned/float mixtures, NaNs/infinities, empty data,
+  scalar/multidimensional queries, invalid arguments, and read-only strided data.
+
+Validation commands:
+
+```sh
+python -m pytest tests --doctest-modules numcompute/sort_search.py
+git diff --check
+```
+
+Results: **172 unit-test cases and four docstring tests passed** (176 test cases
+in the combined run). The docstring tests execute six examples across the four
+sorting/search APIs. All three README Python examples also execute successfully.
+The environment is unchanged. No benchmark results are claimed.
+
 ## Design decisions and limitations
 
 - Numeric validation defaults to `dtype=None` because distinct integers above
@@ -79,13 +116,13 @@ unchanged from checkpoint 1. No performance measurements are claimed.
   loop is documented. Core numerical computations will use NumPy operations.
 - Encoders must define their own NaN category and within-feature comparison
   rules; metrics must align label types and reject unusable empty samples.
-- Selection, searching, the remaining algorithm implementations, numerical
+- Educational quickselect, the remaining algorithm implementations, numerical
   utilities, benchmarks, the notebook, report, and video materials remain
   scheduled for later checkpoints.
 
 ## Next checkpoint
 
-Checkpoint 3 implements top-k selection and binary search with tests and
+Checkpoint 4 implements educational quickselect with tests and
 docstrings. Before starting it, fetch the remote and inspect new contributions.
 Each checkpoint ends with local commits and a pause for user review. Branch
 publication and the final pull request remain scheduled after final verification.
