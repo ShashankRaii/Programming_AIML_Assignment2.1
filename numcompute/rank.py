@@ -115,12 +115,14 @@ def _blend_percentile_values(lower, upper, weight):
     return result
 
 
-def _percentile(data, q, interpolation="linear", axis=None):
-    """Shared NaN-aware kernel; an integer axis is reserved for stats.quantile.
+def _percentile(data, q, interpolation="linear", axis=None, *, _scale=100):
+    """Shared NaN-aware kernel for percentiles and stats.quantile.
 
     Scalar q removes the reduction axis; vector q prepends its length. None
     flattens data. Input is sorted in its own dtype before bounds are gathered
     and converted to at least float64. No Python loops over data/slices are used.
+    Internal _scale=1 accepts probabilities directly, avoiding a q*100/100
+    roundtrip that can change nearest-index rounding at half-indices.
     """
     array = check_array(data)
     if not isinstance(interpolation, str):
@@ -128,12 +130,13 @@ def _percentile(data, q, interpolation="linear", axis=None):
     if interpolation not in ("linear", "lower", "higher", "midpoint", "nearest"):
         raise ValueError(f"unsupported interpolation {interpolation!r}")
     levels = np.asarray(q)
+    units = "probabilities" if _scale == 1 else "percentages"
     if levels.ndim > 1:
         raise ValueError(f"q must be scalar or 1-D; got shape {levels.shape}")
     if levels.dtype.kind not in "iuf":
-        raise TypeError(f"q must contain real numeric percentages; got dtype {levels.dtype}")
-    if not np.isfinite(levels).all() or np.any(levels < 0) or np.any(levels > 100):
-        raise ValueError("q must contain finite percentages between 0 and 100 inclusive")
+        raise TypeError(f"q must contain real numeric {units}; got dtype {levels.dtype}")
+    if not np.isfinite(levels).all() or np.any(levels < 0) or np.any(levels > _scale):
+        raise ValueError(f"q must contain finite {units} between 0 and {_scale} inclusive")
     scalar_q = levels.ndim == 0
     dtype = np.result_type(array.dtype, levels.dtype, np.float64)
     levels = levels.astype(dtype, copy=False).reshape(-1)
@@ -168,7 +171,7 @@ def _percentile(data, q, interpolation="linear", axis=None):
             )
         if matrix.shape[0]:
             ordered = np.sort(matrix, axis=0, kind="stable")
-            position = (levels[:, None] / 100) * np.maximum(counts - 1, 0)
+            position = (levels[:, None] / _scale) * np.maximum(counts - 1, 0)
             low_index = np.floor(position).astype(np.intp)
             high_index = np.ceil(position).astype(np.intp)
             if interpolation == "nearest":

@@ -153,3 +153,82 @@ def test_variance_rejects_unsupported_ddof_types(ddof):
 def test_variance_rejects_negative_ddof():
     with pytest.raises(ValueError, match="ddof must be nonnegative; got -1"):
         stats.var([1, 2], ddof=-1)
+
+
+@pytest.mark.parametrize("method", ["linear", "lower", "higher", "midpoint", "nearest"])
+@pytest.mark.parametrize("axis", [None, 0, 1, -1])
+def test_quantile_modes_axes_and_shapes_match_numpy(method, axis):
+    data = np.random.default_rng(42).normal(size=(3, 4, 5))
+    data[0, 1, 2] = np.nan
+    q = [0, 0.1, 0.25, 0.5, 1]
+    expected = np.nanquantile(data, q, axis=axis, method=method)
+    result = stats.quantile(data, q, axis=axis, interpolation=method)
+    assert result.shape == expected.shape
+    np.testing.assert_allclose(result, expected, rtol=1e-12, atol=1e-12)
+    scalar = stats.quantile(data, 0.5, axis=axis, interpolation=method)
+    np.testing.assert_allclose(scalar, np.nanquantile(data, 0.5, axis=axis, method=method))
+
+
+def test_quantile_does_not_round_probabilities_through_percentages():
+    # q*100/100 can move an exact half-index to its other side.
+    data = np.arange(4)
+    q = (np.arange(3) + 0.5) / 3
+    np.testing.assert_array_equal(stats.quantile(data, q, interpolation="nearest"),
+                                  np.quantile(data, q, method="nearest"))
+
+
+def test_quantile_empty_all_nan_and_empty_queries_have_defined_shapes():
+    with pytest.warns(RuntimeWarning, match="empty or all-NaN"):
+        result = stats.quantile([[1, np.nan], [3, np.nan]], [0, 0.5, 1], axis=0)
+    np.testing.assert_array_equal(result[:, 0], [1, 2, 3])
+    assert np.isnan(result[:, 1]).all()
+    with pytest.warns(RuntimeWarning):
+        assert np.isnan(stats.quantile([], 0.5))
+    assert stats.quantile(np.empty((0, 3)), [], axis=0).shape == (0, 3)
+    assert stats.quantile(np.empty((3, 0)), [0.5], axis=0).shape == (1, 0)
+
+
+def test_quantile_reuses_finite_extreme_and_subnormal_stability():
+    limit = np.finfo(float).max
+    small = np.nextafter(0.0, 1.0)
+    with np.errstate(over="raise", invalid="raise"):
+        assert stats.quantile([-limit, limit], 0.5) == 0
+    assert stats.quantile([small, 2 * small], 0.5) == 2 * small
+    assert stats.quantile([np.inf, np.inf], 0.5) == np.inf
+    with pytest.warns(RuntimeWarning, match="opposite infinities"):
+        assert np.isnan(stats.quantile([-np.inf, np.inf], 0.5))
+
+
+def test_quantile_preserves_readonly_strided_data_and_queries():
+    data = np.arange(24).reshape(4, 6)
+    before = data.copy()
+    data.flags.writeable = False
+    q = np.array([0.25, 0.75])
+    q.flags.writeable = False
+    np.testing.assert_allclose(stats.quantile(data.T[::-2], q, axis=0),
+                               np.quantile(data.T[::-2], q, axis=0))
+    np.testing.assert_array_equal(data, before)
+    np.testing.assert_array_equal(q, [0.25, 0.75])
+
+
+@pytest.mark.parametrize("q", [-0.1, 1.1, 50, np.nan, np.inf])
+def test_quantile_rejects_nonfinite_and_out_of_range_probabilities(q):
+    with pytest.raises(ValueError, match="finite probabilities between 0 and 1"):
+        stats.quantile([1, 2], q)
+
+
+@pytest.mark.parametrize("q", [True, "0.5", None, 1j])
+def test_quantile_rejects_unsupported_probability_types(q):
+    with pytest.raises(TypeError, match="real numeric probabilities"):
+        stats.quantile([1, 2], q)
+
+
+def test_quantile_rejects_invalid_axis_shape_and_method():
+    with pytest.raises(ValueError, match="q must be scalar or 1-D"):
+        stats.quantile([1, 2], [[0.5]])
+    with pytest.raises(ValueError, match="axis 1 is invalid"):
+        stats.quantile([1, 2], 0.5, axis=1)
+    with pytest.raises(TypeError, match="axis must be an integer or None"):
+        stats.quantile([1, 2], 0.5, axis=True)
+    with pytest.raises(ValueError, match="unsupported interpolation"):
+        stats.quantile([1, 2], 0.5, interpolation="unknown")
