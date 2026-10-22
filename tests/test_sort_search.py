@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from numcompute.sort_search import multi_key_sort, stable_sort
+from numcompute.sort_search import multi_key_sort, stable_sort, topk
 
 
 @pytest.mark.parametrize("axis", [None, 0, 1, -1, -2, np.int64(1)])
@@ -228,3 +228,118 @@ def test_multi_key_sort_rejects_vector_and_nonnumeric_data():
         multi_key_sort([1, 2], [0])
     with pytest.raises(TypeError, match="real numeric"):
         multi_key_sort([["red", "blue"]], [0])
+
+
+@pytest.mark.parametrize("largest", [False, True])
+@pytest.mark.parametrize("k", [0, 1, 2, 4, 7])
+def test_topk_cutoff_ties_and_nans_match_independent_reference(largest, k):
+    data = np.array([3.0, np.nan, 5.0, 3.0, 5.0, -np.inf, np.nan])
+    expected = sorted(
+        range(data.size),
+        key=lambda i: (True, 0) if np.isnan(data[i]) else
+        (False, -float(data[i]) if largest else float(data[i])),
+    )[:k]
+    values, indices = topk(data, k, largest=largest)
+    np.testing.assert_array_equal(indices, expected)
+    np.testing.assert_array_equal(values, data[expected])
+    assert indices.dtype == np.intp
+    assert values.dtype == data.dtype
+
+
+@pytest.mark.parametrize("largest", [False, True])
+def test_topk_repeated_values_at_cutoff_prefer_earliest_indices(largest):
+    data = np.array([4, 4, 4, 9, 0, 4])
+    _, indices = topk(data, 3, largest=largest)
+    np.testing.assert_array_equal(indices, [3, 0, 1] if largest else [4, 0, 1])
+
+
+@pytest.mark.parametrize("largest", [False, True])
+def test_topk_all_equal_and_all_nan_inputs(largest):
+    for data in [np.full(6, 3), np.full(6, np.nan)]:
+        values, indices = topk(data, 4, largest=largest)
+        np.testing.assert_array_equal(indices, [0, 1, 2, 3])
+        np.testing.assert_array_equal(values, data[:4])
+
+
+@pytest.mark.parametrize("largest", [False, True])
+def test_topk_random_integer_data_matches_python_reference(largest):
+    data = np.random.default_rng(42).integers(-10, 11, size=257)
+    for k in [1, 8, 128, 256, 257]:
+        expected = sorted(range(data.size), key=lambda i: int(data[i]), reverse=largest)[:k]
+        values, indices = topk(data, k, largest)
+        np.testing.assert_array_equal(indices, expected)
+        np.testing.assert_array_equal(values, data[indices])
+
+
+@pytest.mark.parametrize("dtype", [np.int64, np.uint64])
+@pytest.mark.parametrize("largest", [False, True])
+def test_topk_extreme_integers_remain_distinct(dtype, largest):
+    limits = np.iinfo(dtype)
+    data = np.array([limits.min, 2**53 + 1, limits.max, 2**53, limits.max], dtype=dtype)
+    expected = sorted(range(data.size), key=lambda i: int(data[i]), reverse=largest)[:4]
+    values, indices = topk(data, 4, largest)
+    np.testing.assert_array_equal(indices, expected)
+    np.testing.assert_array_equal(values, data[expected])
+    assert values.dtype == dtype
+
+
+def test_topk_nan_never_displaces_infinity_or_valid_value():
+    data = [np.nan, -np.inf, np.inf, 1.0, np.nan]
+    np.testing.assert_array_equal(topk(data, 3)[0], [np.inf, 1, -np.inf])
+    np.testing.assert_array_equal(topk(data, 3, largest=False)[0], [-np.inf, 1, np.inf])
+
+
+@pytest.mark.parametrize("largest", [False, True])
+def test_topk_signed_zero_ties_preserve_input_order(largest):
+    data = np.array([-0.0, 0.0, -0.0, 0.0])
+    values, indices = topk(data, 3, largest)
+    np.testing.assert_array_equal(indices, [0, 1, 2])
+    np.testing.assert_array_equal(np.signbit(values), [True, False, True])
+
+
+def test_topk_empty_and_singleton_inputs_and_value_only_result():
+    values, indices = topk(np.array([], dtype=np.int16), 0)
+    assert values.shape == indices.shape == (0,)
+    assert values.dtype == np.int16
+    np.testing.assert_array_equal(topk([8], np.int64(1), return_indices=False), [8])
+    np.testing.assert_array_equal(topk([True, False, True], 2)[1], [0, 2])
+    np.testing.assert_array_equal(topk([2], 0, return_indices=np.bool_(False)), [])
+
+
+def test_topk_strided_readonly_input_is_not_modified_and_indices_are_local():
+    original = np.arange(16)
+    original.flags.writeable = False
+    view = original[::-3]
+    before = view.copy()
+    values, indices = topk(view, 3, largest=False)
+    np.testing.assert_array_equal(values, view[indices])
+    np.testing.assert_array_equal(indices, [5, 4, 3])
+    np.testing.assert_array_equal(view, before)
+    assert not np.shares_memory(values, original)
+
+
+@pytest.mark.parametrize("k", [-1, 4])
+def test_topk_reports_invalid_k_and_length(k):
+    with pytest.raises(ValueError, match=rf"0 <= k <= 3; got {k}"):
+        topk([1, 2, 3], k)
+
+
+@pytest.mark.parametrize("k", [True, np.bool_(False), 1.5, "2"])
+def test_topk_rejects_noninteger_k(k):
+    with pytest.raises(TypeError, match="k must be an integer"):
+        topk([1, 2, 3], k)
+
+
+@pytest.mark.parametrize("option", [{"largest": 1}, {"return_indices": 0}])
+def test_topk_rejects_nonboolean_flags(option):
+    with pytest.raises(TypeError, match="must be boolean"):
+        topk([1], 1, **option)
+
+
+def test_topk_rejects_wrong_shape_nonnumeric_and_nonzero_k_on_empty():
+    with pytest.raises(ValueError, match=r"1 dimension; got shape \(1, 2\)"):
+        topk([[1, 2]], 1)
+    with pytest.raises(TypeError, match="real numeric"):
+        topk(["1"], 1)
+    with pytest.raises(ValueError, match="0 <= k <= 0"):
+        topk([], 1)
