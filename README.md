@@ -5,11 +5,12 @@ built with Python and NumPy. The project will provide reusable data loading,
 preprocessing, sorting, ranking, statistics, metrics, numerical differentiation,
 and pipeline components.
 
-**Current status: checkpoint 6 completed.** Packaging, shared input validation,
+**Current status: checkpoint 7 completed.** Packaging, shared input validation,
 all planned sorting/search APIs, tie-aware ranking and percentile interpolation
 are implemented and tested, alongside descriptive statistics, quantiles and
-histograms. Streaming statistics and the remaining modules are scheduled for
-later checkpoints. Benchmarks and the end-to-end demo are pending.
+histograms and mergeable running statistics. Member B's three modules have
+integration checks. The remaining modules, benchmarks and end-to-end demo are
+scheduled for later checkpoints.
 
 ## Installation
 
@@ -189,6 +190,36 @@ Empty/all-NaN data yields zero counts, with automatic default edges spanning
 0–1. Bin lookup reuses exact numeric comparisons from binary search and avoids
 silently rounding large integer observations onto floating bin boundaries.
 
+Running statistics summarize a one-dimensional stream without retaining data:
+
+```python
+import numpy as np
+from numcompute.stats import RunningStats
+
+running = RunningStats().update([1, 3, np.nan])
+other = RunningStats().update([5, 7])
+assert running.merge(other) is running
+assert running.count == 4
+assert float(running.mean) == 4
+assert float(running.variance) == 5
+assert other.count == 2
+```
+
+`RunningStats` exposes read-only `count`, `mean` and population `variance`
+(ddof=0). An empty accumulator has count 0 and NaN mean/variance, without
+warnings; a singleton has zero variance. Empty/all-NaN batches are no-ops.
+Updates take one-dimensional batches; create a separate accumulator per feature
+for tabular data. Both `update` and `merge` return self. Merging leaves the source
+unchanged; self-merging counts the observations twice.
+
+Vectorized batch moments are combined using the parallel Welford formula.
+Only three scalars are retained. Updates use O(n) work and temporary space;
+merges use O(1) work and space. Infinity is rejected. Updates/merges that cannot
+keep a finite centered moment raise OverflowError and preserve existing state.
+This includes cases where the unnormalized moment overflows even though a
+variance could be representable. Floating conversion and accumulation have the
+usual precision limits, and different batch groupings may differ slightly.
+
 ## API and implementation status
 
 Import validation helpers from `numcompute.utils`, sorting/search functions from
@@ -212,7 +243,7 @@ and statistical functions from `numcompute.stats`.
 | Descriptive statistics | `mean`, `median`, `std`, `var`, `minimum`, `maximum` | Implemented |
 | Quantiles | `quantile(data, q, axis=None, interpolation='linear')` | Implemented |
 | Histograms | `histogram(data, bins=10, range=None)` | Implemented |
-| Streaming statistics | Welford running statistics and batch merge | Planned: checkpoint 7 |
+| Streaming statistics | `RunningStats`, `update(batch)`, `merge(other)`, read-only summary properties | Implemented |
 | Data loading | CSV and chunked loading | Planned: checkpoint 8 |
 | Preprocessing | Scalers, imputer, one-hot encoder | Planned: checkpoint 9 |
 | Pipelines | Pipeline and feature union | Planned: checkpoint 10 |
@@ -229,16 +260,18 @@ python -m pytest tests/test_validation.py
 python -m pytest tests/test_sort_search.py
 python -m pytest tests/test_rank.py
 python -m pytest tests/test_stats.py
+python -m pytest tests/test_running_stats.py tests/test_member_b_integration.py
 python -m pytest tests --doctest-modules numcompute -W error
 python -m pip check
 git diff --check
 ```
 
-Checkpoint 6 has **458 passing unit-test cases**: 67 sorting cases, 34 top-k
+Checkpoint 7 has **499 passing unit-test cases**: 67 sorting cases, 34 top-k
 cases, 24 binary-search cases, 33 quickselect cases, 26 rank cases, 71 percentile
 cases, 90 descriptive-statistics cases, 34 quantile cases, 32 histogram cases,
-45 validation cases, and two original package smoke tests. Fifteen docstring
-tests (20 examples) also pass. The full run treats unexpected warnings as errors.
+34 running-statistics cases, seven integration cases, 45 validation cases, and
+two original package smoke tests. Eighteen docstring tests (28 examples) also
+pass. The full run treats unexpected warnings as errors.
 Coverage includes
 stable ties and cutoff selection, extreme k, insertion boundaries, scalar and
 shaped queries, mixed sort directions, large and mixed numeric dtypes, NaNs,
@@ -252,12 +285,19 @@ shared axis kernel, and cover empty/all-NaN slices, infinity handling, finite
 overflow and subnormal midpoint regression cases. Statistics tests cover scalar,
 matrix and 3-D reduction shapes, NaN policies, degrees of freedom, empty slices,
 quantile probability rounding, bin-edge inclusion, and precise large integer
-histogram boundaries. Later algorithms need their own tests.
+histogram boundaries. Running-statistics checks cover batch/stream agreement,
+merging, state preservation, large offsets, finite limits and invalid input.
+Integration checks exercise all three Member B modules together. Later
+algorithms still need their own tests.
 
 Every feature checkpoint includes tests and docstrings describing parameters,
 return shapes, errors, and time/space complexity. Genuine defects receive
 regression tests and explanatory fixes. See [the development record](docs/development.md)
 for the baseline and completed checkpoint evidence.
+
+The [Member B acceptance review](docs/member_b_review.md) maps completed
+requirements to implementation and tests, and identifies the benchmark/demo
+evidence still needed for submission.
 
 ## Benchmarks and submission materials
 
@@ -279,7 +319,7 @@ table does not attribute unfinished work to a teammate.
 | Member | Planned responsibility | Completed contribution |
 | --- | --- | --- |
 | A — Shashank Rai | I/O, preprocessing, pipeline, sample data, demo | Original project scaffold, initial packaging and two package smoke tests, as recorded in the original Git history |
-| B — Rugved Wankhade | Sorting/searching, ranking, statistics, README, testing report section | Checkpoints 1–6: Python/test setup, validation, sorting/searching, ranking, interpolation, descriptive statistics, quantiles, histograms, tests and documentation, developed with Codex assistance |
+| B — Rugved Wankhade | Sorting/searching, ranking, statistics, README, testing report section | Checkpoints 1–7: Python/test setup, validation, sorting/searching, ranking, interpolation, batch/streaming statistics, quantiles, histograms, unit/integration tests and documentation, developed with Codex assistance |
 | C — name to confirm | Utilities, metrics, differentiation, benchmarks | No implemented module contribution identified in the reviewed remote snapshot |
 | All | Review, integration, report, video | Pending |
 
