@@ -9,6 +9,7 @@ import operator
 import numpy as np
 
 from .rank import _percentile
+from .sort_search import binary_search
 from .utils import check_array
 
 
@@ -395,3 +396,100 @@ def quantile(data, q, axis=None, interpolation="linear"):
            [3., 4.]])
     """
     return _percentile(data, q, interpolation=interpolation, axis=axis, _scale=1)
+
+
+def histogram(data, bins=10, range=None):
+    """Count flattened non-NaN values in bins with an inclusive final edge.
+
+    Parameters
+    ----------
+    data : array_like, shape (...,)
+        Real numeric or boolean data with at least one dimension. NaNs are
+        omitted, not replaced. Input and bin edges are never modified.
+    bins : positive int or real array_like, shape (b + 1,), default 10
+        An integer generates equal-width edges using np.histogram_bin_edges.
+        Explicit edges must be strictly increasing, contain at least two
+        values, and have no NaNs; infinite endpoints are allowed. Boolean bin
+        counts, boolean edges, and automatic string estimators are rejected.
+    range : pair of finite real numbers or None, default None
+        Inclusive bounds for integer bins. Values outside are ignored. Equal
+        bounds are expanded by NumPy. None infers bounds from non-NaN data,
+        using [0, 1] for empty/all-NaN input. Infinity in data requires a finite
+        range or explicit edges. With explicit edges, range is validated but
+        has no effect, matching NumPy's use of the explicit edges.
+
+    Returns
+    -------
+    counts : ndarray of integers, shape (b,)
+        Counts for [edge[i], edge[i+1]), except the final bin includes its right
+        edge. Out-of-range values are excluded. No density normalization.
+    edges : ndarray, shape (b + 1,)
+        Independent copy of the edges. Explicit edge dtypes are preserved;
+        generated edge dtypes follow NumPy. Returned counts/edges share no
+        memory with caller input. Empty data returns zero counts.
+
+    Raises
+    ------
+    TypeError
+        If data, bins or range has an unsupported type.
+    ValueError
+        If shapes are invalid, bin count is not positive, edges are not strictly
+        increasing/contain NaNs, range is not finite/ordered, or automatic
+        edges cannot be represented as finite distinct values.
+
+    Complexity
+    ----------
+    Time O(n log(b + 1) + b); auxiliary space O(n + b). NumPy generates edges;
+    the shared binary_search locates bins with exact mixed numeric comparisons
+    when needed, and np.bincount accumulates them without Python sample loops.
+
+    Examples
+    --------
+    >>> histogram([0, 1, 2, 3, np.nan], bins=[0, 1, 3])
+    (array([1, 3]), array([0, 1, 3]))
+    """
+    array = check_array(data)
+    values = array.reshape(-1)
+    values = values[~np.isnan(values)]
+    if values.dtype.kind == "b":
+        values = values.astype(np.uint8)
+
+    bounds = None
+    if range is not None:
+        bounds = np.asarray(range)
+        if bounds.dtype.kind not in "iuf":
+            raise TypeError("range must contain real numeric bounds")
+        if bounds.shape != (2,):
+            raise ValueError(f"range must have shape (2,); got {bounds.shape}")
+        if not np.isfinite(bounds).all() or bounds[0] > bounds[1]:
+            raise ValueError("range must have finite ordered bounds (low <= high)")
+
+    supplied = np.asarray(bins)
+    if supplied.ndim == 0:
+        if supplied.dtype.kind not in "iu":
+            raise TypeError("bins must be a positive integer or a 1-D real edge array")
+        count = operator.index(bins)
+        if count <= 0:
+            raise ValueError(f"bins must be positive; got {count}")
+        if bounds is None and np.isinf(values).any():
+            raise ValueError("data contains infinity; provide a finite range or explicit edges")
+        edges = np.histogram_bin_edges(values, bins=count, range=bounds)
+        if not np.isfinite(edges).all():
+            raise ValueError("automatic bin edges are not finite; provide explicit edges")
+    else:
+        if supplied.dtype.kind not in "iuf":
+            raise TypeError("bins must contain real numeric edges")
+        edges = supplied
+    if edges.ndim != 1 or edges.size < 2:
+        raise ValueError(f"bin edges must be 1-D with at least 2 values; got shape {edges.shape}")
+    # Direct comparisons avoid overflow in np.diff on extreme integer edges.
+    if np.isnan(edges).any() or np.any(edges[1:] <= edges[:-1]):
+        raise ValueError("bin edges must be strictly increasing and contain no NaNs")
+
+    positions, matched = binary_search(edges, values)
+    bin_indices = positions + matched - 1
+    final_edge = matched & (positions == edges.size - 1)
+    bin_indices[final_edge] -= 1
+    inside = (bin_indices >= 0) & (bin_indices < edges.size - 1)
+    counts = np.bincount(bin_indices[inside], minlength=edges.size - 1)
+    return counts, edges.copy()
