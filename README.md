@@ -220,6 +220,79 @@ This includes cases where the unnormalized moment overflows even though a
 variance could be representable. Floating conversion and accumulation have the
 usual precision limits, and different batch groupings may differ slightly.
 
+## Loading data, preprocessing and pipelines
+
+`load_csv` reads numeric and text columns into NumPy arrays. Empty cells become
+`NaN` (or `""` for `dtype=str`); pass `missing="skip"` to drop incomplete rows or
+`fill_value=...` to use a placeholder. Every preprocessor has the same
+`fit` / `transform` / `fit_transform` API, so they chain in a `Pipeline`.
+
+```python
+from numcompute.io import load_csv, read_header
+from numcompute.preprocessing import OneHotEncoder, SimpleImputer, StandardScaler
+from numcompute.pipeline import Pipeline, ThresholdClassifier
+
+path = "data/adelaide_weather_2015.csv"
+header = read_header(path)
+num_cols = [header.index(c) for c in ["MaxTemp", "Rainfall", "Humidity3pm"]]
+
+X = load_csv(path, skip_header=1, usecols=num_cols)            # empty cells -> NaN
+X_cat = load_csv(path, skip_header=1, usecols=header.index("WindGustDir"), dtype=str)
+y = (load_csv(path, skip_header=1, usecols=header.index("RainTomorrow"), dtype=str).ravel()
+     == "Yes").astype(int)
+
+X_scaled = Pipeline([
+    ("impute", SimpleImputer(strategy="median")),
+    ("scale", StandardScaler()),
+]).fit_transform(X)
+
+wind = Pipeline([
+    ("impute", SimpleImputer(strategy="most_frequent", missing_values="")),
+    ("onehot", OneHotEncoder()),
+]).fit_transform(X_cat)                                         # 16 wind directions
+
+model = Pipeline([
+    ("impute", SimpleImputer(strategy="median")),
+    ("clf", ThresholdClassifier(feature=2)),  # rain tomorrow if 3pm humidity is high
+]).fit(X, y)
+predictions = model.predict(X)
+```
+
+Design notes:
+
+- The scalers ignore NaNs when fitting and keep them in place when transforming,
+  so imputation can happen before or after scaling.
+- Constant columns get a scale of 1, so they never cause a division by zero.
+- Standard deviations are computed from deviations divided by their largest
+  magnitude before squaring, and min-max scaling works on halved values, so data
+  near the float64 limit (about 1e308) does not overflow.
+- Using a transformer before `fit`, or with a different number of columns than it
+  was fitted on, raises an error that names the problem.
+- `ThresholdClassifier` and `MeanRegressor` are deliberately tiny models used only
+  to show the Estimator side of the API; the assignment does not ask for real models.
+
+## Demo data
+
+`demo/quickstart.ipynb` uses `data/adelaide_weather_2015.csv`: 360 days of
+Adelaide observations from 2015 with 11 columns, including missing cells, two
+categorical columns (`WindGustDir`, `RainToday`) and a yes/no target
+(`RainTomorrow`).
+
+**Source and credit.** Daily weather observations © Commonwealth of Australia,
+Bureau of Meteorology (https://www.bom.gov.au/climate/data). The data was taken
+from the "Rain in Australia" (`weatherAUS.csv`) dataset on Kaggle, which
+originally comes from the R `rattle` package. The Bureau has allowed use of this
+data on condition that it is acknowledged as the source.
+
+The subset can be rebuilt from the original file:
+
+```sh
+python data/make_adelaide_weather.py path/to/weatherAUS.csv
+```
+
+The original `weatherAUS.csv` is not stored in the repository (it is listed in
+`.gitignore`).
+
 ## API and implementation status
 
 Import validation helpers from `numcompute.utils`, sorting/search functions from
@@ -244,13 +317,15 @@ and statistical functions from `numcompute.stats`.
 | Quantiles | `quantile(data, q, axis=None, interpolation='linear')` | Implemented |
 | Histograms | `histogram(data, bins=10, range=None)` | Implemented |
 | Streaming statistics | `RunningStats`, `update(batch)`, `merge(other)`, read-only summary properties | Implemented |
-| Data loading | CSV and chunked loading | Planned: checkpoint 8 |
-| Preprocessing | Scalers, imputer, one-hot encoder | Planned: checkpoint 9 |
-| Pipelines | Pipeline and feature union | Planned: checkpoint 10 |
-| Metrics | Classification, MSE, ROC/AUC | Planned: checkpoint 11 |
-| Differentiation | Gradient and Jacobian | Planned: checkpoint 12 |
-| Numerical utilities and benchmarking | Stable activations, distances, timing harness | Planned: checkpoint 13 |
-| Demonstration | End-to-end notebook and sample data | Planned: checkpoint 14 |
+| CSV loading | `load_csv(path, delimiter=',', skip_header=0, missing='fill', fill_value=nan, usecols=None, dtype=float)`, `read_header(path)` | Implemented |
+| Chunked CSV streaming | `load_csv_chunks(path, chunk_size, ...)` | Implemented |
+| Scalers | `StandardScaler(with_mean=True, with_std=True)`, `MinMaxScaler(feature_range=(0, 1), clip=False)` | Implemented |
+| Imputation | `SimpleImputer(strategy='mean'\|'median'\|'most_frequent'\|'constant', fill_value=None, missing_values=nan)` | Implemented |
+| One-hot encoding | `OneHotEncoder(handle_unknown='error'\|'ignore')`, `get_feature_names_out()` | Implemented |
+| Transformer/Estimator API | `BaseTransformer`, `BaseEstimator`, `NotFittedError` | Implemented |
+| Pipelines | `Pipeline(steps)`, `FeatureUnion(transformer_list)` | Implemented |
+| Example estimators | `ThresholdClassifier(feature=0)`, `MeanRegressor()` | Implemented |
+| Demonstration | `demo/quickstart.ipynb` on Adelaide 2015 weather data | Implemented |
 
 ## Testing and development
 
@@ -317,7 +392,7 @@ table does not attribute unfinished work to a teammate.
 
 | Member | Planned responsibility | Completed contribution |
 | --- | --- | --- |
-| A — Shashank Rai | I/O, preprocessing, pipeline, sample data, demo | Original project scaffold, initial packaging and two package smoke tests, as recorded in the original Git history |
+| A — Shashank Rai | I/O, preprocessing, pipeline, sample data, demo | Project scaffold and packaging; `io.py` (CSV loading, missing-value fill/skip, chunked streaming); `preprocessing.py` (StandardScaler, MinMaxScaler, SimpleImputer, OneHotEncoder); `pipeline.py` (Transformer/Estimator protocol, Pipeline, FeatureUnion, example estimators); 113 unit tests for these modules; Adelaide 2015 weather dataset and rebuild script; `demo/quickstart.ipynb` (all eight sections); integration of the team branches; developed with Claude assistance.
 | B — Rugved Wankhade | Sorting/searching, ranking, statistics, README, testing report section | Checkpoints 1–7: Python/test setup, validation, sorting/searching, ranking, interpolation, batch/streaming statistics, quantiles, histograms, unit/integration tests and documentation, developed with Codex assistance |
 | C — Rejith Jacob | Utilities, metrics, differentiation, benchmarks | No implemented module contribution identified in the reviewed remote snapshot |
 | All | Review, integration, report, video | Pending |
