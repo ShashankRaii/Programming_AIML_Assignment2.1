@@ -22,3 +22,5 @@ htmlcov/
 .idea/
 .DS_Store
 Thumbs.db
+
+weatherAUS.csv
