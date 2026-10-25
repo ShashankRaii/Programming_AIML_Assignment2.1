@@ -247,6 +247,15 @@ def test_imputer_custom_numeric_marker():
     np.testing.assert_array_equal(out.ravel(), [1.0, 2.0, 3.0])
 
 
+def test_numpy_nan_marker_and_strict_scaler_flags():
+    out = SimpleImputer(missing_values=np.float32(np.nan)).fit_transform([[1.], [np.nan]])
+    np.testing.assert_array_equal(out, [[1.], [1.]])
+    for scaler in [StandardScaler(with_mean="yes"), StandardScaler(with_std=1),
+                   MinMaxScaler(clip="yes")]:
+        with pytest.raises(TypeError, match="boolean"):
+            scaler.fit([[1.], [2.]])
+
+
 def test_imputer_all_missing_column_raises():
     with pytest.raises(ValueError, match="only missing"):
         SimpleImputer().fit(np.array([[np.nan, 1.0], [np.nan, 2.0]]))

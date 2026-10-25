@@ -27,6 +27,11 @@ def _require_samples(X, name):
         raise ValueError(f"{name}.fit requires at least one sample; got shape {X.shape}")
 
 
+def _check_flag(value, name):
+    if not isinstance(value, (bool, np.bool_)):
+        raise TypeError(f"{name} must be boolean")
+
+
 def _column_moments(X):
     """Mean, population std and non-NaN count of every column, ignoring NaNs."""
     valid = ~np.isnan(X)
@@ -111,6 +116,8 @@ class StandardScaler(BaseTransformer):
         self.with_std = with_std
 
     def fit(self, X, y=None):
+        _check_flag(self.with_mean, "with_mean")
+        _check_flag(self.with_std, "with_std")
         X = _check_numeric(X)
         _require_samples(X, "StandardScaler")
         mean, std, counts = _column_moments(X)
@@ -176,6 +183,7 @@ class MinMaxScaler(BaseTransformer):
         self.clip = clip
 
     def _range(self):
+        _check_flag(self.clip, "clip")
         try:
             lo, hi = (float(v) for v in self.feature_range)
         except (TypeError, ValueError) as exc:
@@ -228,7 +236,7 @@ class MinMaxScaler(BaseTransformer):
 
 
 def _missing_mask(X, missing_values):
-    if isinstance(missing_values, float) and np.isnan(missing_values):
+    if isinstance(missing_values, (float, np.floating)) and np.isnan(missing_values):
         if X.dtype.kind == "f":
             return np.isnan(X)
         if X.dtype.kind == "O":
