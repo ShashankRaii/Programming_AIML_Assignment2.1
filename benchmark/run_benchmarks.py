@@ -185,7 +185,7 @@ def write_outputs(results, out_dir, repeats):
     fields = ["operation", "n", "loop_s", "vectorised_s", "speedup",
               "loop_mean_s", "loop_std_s", "vectorised_mean_s", "vectorised_std_s"]
     with open(out_dir / "results.csv", "w", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=fields)
+        writer = csv.DictWriter(fh, fieldnames=fields, lineterminator="\n")
         writer.writeheader()
         for row in results:
             writer.writerow(
