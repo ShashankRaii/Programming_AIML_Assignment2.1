@@ -1,0 +1,69 @@
+name: Verify NumCompute
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: "3.10"
+            numpy: "numpy==1.24.4"
+          - os: ubuntu-latest
+            python: "3.13"
+            numpy: "numpy"
+          - os: windows-latest
+            python: "3.11"
+            numpy: "numpy"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - run: python -m pip install -e ".[test]"
+      - run: python -m pip install "${{ matrix.numpy }}"
+      - run: python -m pip check
+      - run: python -m pytest tests --doctest-modules numcompute -W error
+
+  demo-and-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m ipykernel install --user --name numcompute
+      - name: Execute the unchanged notebook from a fresh kernel
+        run: >-
+          jupyter nbconvert --execute --to notebook
+          --ExecutePreprocessor.kernel_name=numcompute
+          --ExecutePreprocessor.timeout=180
+          --output quickstart.executed.ipynb
+          --output-dir "${{ runner.temp }}"
+          demo/quickstart.ipynb
+      - name: Verify benchmark output agreement and command
+        run: python benchmark/run_benchmarks.py --quick --repeats 2 --out "${{ runner.temp }}/benchmarks"
+      - name: Build and install a wheel
+        run: |
+          python -m pip wheel . --no-deps --wheel-dir dist
+          python -m pip install --force-reinstall --no-deps dist/*.whl
+      - name: Import installed wheel outside the source checkout
+        working-directory: ${{ runner.temp }}
+        run: >-
+          python -c "from numcompute.sort_search import topk;
+          from numcompute.preprocessing import StandardScaler;
+          assert topk([1, 3, 2], 1, return_indices=False).tolist() == [3];
+          assert StandardScaler().fit_transform([[1.], [3.]]).ravel().tolist() == [-1., 1.]"
