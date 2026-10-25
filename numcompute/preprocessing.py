@@ -116,6 +116,39 @@ class StandardScaler(BaseTransformer):
         self.with_std = with_std
 
     def fit(self, X, y=None):
+        """Learn the column-wise transformation parameters and return self.
+
+        Parameters
+        ----------
+        X : array_like, shape (n_samples, n_features)
+            Real numeric matrix, converted to float64; infinities are rejected.
+        y : optional
+            Ignored; accepted for composition with supervised components.
+
+        Returns
+        -------
+        self : StandardScaler
+
+        Raises
+        ------
+        TypeError
+            Unsupported input type or non-boolean configuration flag.
+        ValueError
+            Invalid matrix shape, infinity or feature-count mismatch.
+        ValueError
+            No training rows.
+
+        Complexity
+        ----------
+        O(n*d) time and auxiliary space for n samples and d features.
+
+        Notes
+        -----
+        Inputs are never modified. NaNs remain in place; all-NaN training features pass through.
+        Constant features use scale 1. var_ can be infinite when its square cannot be
+        represented, even when scale_ is finite. Computations are column-wise; float64
+        conversion may round large integers.
+        """
         _check_flag(self.with_mean, "with_mean")
         _check_flag(self.with_std, "with_std")
         X = _check_numeric(X)
@@ -130,14 +163,73 @@ class StandardScaler(BaseTransformer):
         return self
 
     def transform(self, X):
-        """Return the standardised X, shape (n_samples, n_features)."""
+        """Return an independent standardized matrix.
+
+        Parameters
+        ----------
+        X : array_like, shape (n_samples, n_features)
+            Real numeric matrix, converted to float64; infinities are rejected.
+
+        Returns
+        -------
+        X_out : ndarray of float64, shape (n_samples, n_features)
+
+        Raises
+        ------
+        TypeError
+            Unsupported input type or non-boolean configuration flag.
+        ValueError
+            Invalid matrix shape, infinity or feature-count mismatch.
+        NotFittedError
+            Called before fitting (a RuntimeError, also a ValueError/AttributeError).
+
+        Complexity
+        ----------
+        O(n*d) time and auxiliary space for n samples and d features.
+
+        Notes
+        -----
+        Inputs are never modified. NaNs remain in place; all-NaN training features pass through.
+        Constant features use scale 1. var_ can be infinite when its square cannot be
+        represented, even when scale_ is finite. Computations are column-wise; float64
+        conversion may round large integers. Empty sample axes are accepted.
+        """
         self._check_is_fitted("scale_")
         X = _check_numeric(X)
         self._check_n_features(X)
         return _standardise(X, self.mean_, self.scale_)
 
     def inverse_transform(self, X):
-        """Undo transform: X * scale_ + mean_."""
+        """Undo the fitted centering and scaling.
+
+        Parameters
+        ----------
+        X : array_like, shape (n_samples, n_features)
+            Real numeric matrix, converted to float64; infinities are rejected.
+
+        Returns
+        -------
+        X_out : ndarray of float64, shape matching X
+
+        Raises
+        ------
+        TypeError
+            Unsupported input type or non-boolean configuration flag.
+        ValueError
+            Invalid matrix shape, infinity or feature-count mismatch.
+        NotFittedError
+            Called before fitting (a RuntimeError, also a ValueError/AttributeError).
+
+        Complexity
+        ----------
+        O(n*d) time and output space.
+
+        Notes
+        -----
+        Inputs are never modified. Computations act per column (axis 0). NaNs follow the class
+        policy. Float64 conversion may round large integers. Reconstruction has ordinary float64
+        rounding and overflow limits.
+        """
         self._check_is_fitted("scale_")
         X = _check_numeric(X)
         self._check_n_features(X)
@@ -195,6 +287,39 @@ class MinMaxScaler(BaseTransformer):
         return lo, hi
 
     def fit(self, X, y=None):
+        """Learn the column-wise transformation parameters and return self.
+
+        Parameters
+        ----------
+        X : array_like, shape (n_samples, n_features)
+            Real numeric matrix, converted to float64; infinities are rejected.
+        y : optional
+            Ignored; accepted for composition with supervised components.
+
+        Returns
+        -------
+        self : MinMaxScaler
+
+        Raises
+        ------
+        TypeError
+            Unsupported input type or non-boolean configuration flag.
+        ValueError
+            Invalid matrix shape, infinity or feature-count mismatch.
+        ValueError
+            No training rows.
+
+        Complexity
+        ----------
+        O(n*d) time and auxiliary space for n samples and d features.
+
+        Notes
+        -----
+        Inputs are never modified. NaNs remain in place; all-NaN training features return NaN.
+        Constant training features use a unit data range for extrapolation. Unrepresentable
+        extrapolated outputs become infinity silently. Computations are column-wise; float64
+        conversion may round large integers.
+        """
         self._range()
         X = _check_numeric(X)
         _require_samples(X, "MinMaxScaler")
@@ -212,7 +337,37 @@ class MinMaxScaler(BaseTransformer):
         return self
 
     def transform(self, X):
-        """Return X scaled into feature_range, shape (n_samples, n_features)."""
+        """Return an independent scaled matrix.
+
+        Parameters
+        ----------
+        X : array_like, shape (n_samples, n_features)
+            Real numeric matrix, converted to float64; infinities are rejected.
+
+        Returns
+        -------
+        X_out : ndarray of float64, shape (n_samples, n_features)
+
+        Raises
+        ------
+        TypeError
+            Unsupported input type or non-boolean configuration flag.
+        ValueError
+            Invalid matrix shape, infinity or feature-count mismatch.
+        NotFittedError
+            Called before fitting (a RuntimeError, also a ValueError/AttributeError).
+
+        Complexity
+        ----------
+        O(n*d) time and auxiliary space for n samples and d features.
+
+        Notes
+        -----
+        Inputs are never modified. NaNs remain in place; all-NaN training features return NaN.
+        Constant training features use a unit data range for extrapolation. Unrepresentable
+        extrapolated outputs become infinity silently. Computations are column-wise; float64
+        conversion may round large integers. Empty sample axes are accepted.
+        """
         self._check_is_fitted("data_min_")
         lo, hi = self._range()
         X = _check_numeric(X)
@@ -307,6 +462,38 @@ class SimpleImputer(BaseTransformer):
         return check_categories(X, ensure_2d=True)
 
     def fit(self, X, y=None):
+        """Learn the column-wise transformation parameters and return self.
+
+        Parameters
+        ----------
+        X : array_like, shape (n_samples, n_features)
+            Numeric matrix, or comparable categorical strings/numbers where supported.
+        y : optional
+            Ignored; accepted for composition with supervised components.
+
+        Returns
+        -------
+        self : SimpleImputer
+
+        Raises
+        ------
+        TypeError
+            Unsupported input or incomparable category types.
+        ValueError
+            Invalid strategy, shape, missing data or feature-count mismatch.
+        ValueError
+            No training rows.
+
+        Complexity
+        ----------
+        O(n*d) for mean/constant; O(d*n*log(n)) for median/mode; O(n*d) space.
+
+        Notes
+        -----
+        Inputs are never modified. The configured missing marker is replaced. For mean/median,
+        NaNs are ignored when fitting; an entirely missing feature is rejected unless the
+        strategy is constant. Other values remain unchanged.
+        """
         X = self._validate(X)
         _require_samples(X, "SimpleImputer")
         mask = _missing_mask(X, self.missing_values)
@@ -353,7 +540,38 @@ class SimpleImputer(BaseTransformer):
         return np.array(modes, dtype=X.dtype if X.dtype.kind != "O" else object)
 
     def transform(self, X):
-        """Return a copy of X with the missing entries filled."""
+        """Return an independent imputed matrix.
+
+        Parameters
+        ----------
+        X : array_like, shape (n_samples, n_features)
+            Numeric matrix, or comparable categorical strings/numbers where supported.
+
+        Returns
+        -------
+        X_out : ndarray, shape (n_samples, n_features)
+            Numeric mean/median output is float64; other strategies promote the input and fill
+            dtypes as needed.
+
+        Raises
+        ------
+        TypeError
+            Unsupported input or incomparable category types.
+        ValueError
+            Invalid strategy, shape, missing data or feature-count mismatch.
+        NotFittedError
+            Called before fitting (a RuntimeError, also a ValueError/AttributeError).
+
+        Complexity
+        ----------
+        O(n*d) time and auxiliary space for n samples and d features.
+
+        Notes
+        -----
+        Inputs are never modified. The configured missing marker is replaced. For mean/median,
+        NaNs are ignored when fitting; an entirely missing feature is rejected unless the
+        strategy is constant. Other values remain unchanged. Empty sample axes are accepted.
+        """
         self._check_is_fitted("statistics_")
         X = self._validate(X)
         self._check_n_features(X)
@@ -415,6 +633,38 @@ class OneHotEncoder(BaseTransformer):
         return X
 
     def fit(self, X, y=None):
+        """Learn the column-wise transformation parameters and return self.
+
+        Parameters
+        ----------
+        X : array_like, shape (n_samples, n_features)
+            Numeric matrix, or comparable categorical strings/numbers where supported.
+        y : optional
+            Ignored; accepted for composition with supervised components.
+
+        Returns
+        -------
+        self : OneHotEncoder
+
+        Raises
+        ------
+        TypeError
+            Unsupported input or incomparable category types.
+        ValueError
+            Invalid strategy, shape, missing data or feature-count mismatch.
+        ValueError
+            No training rows.
+
+        Complexity
+        ----------
+        O(d*n*log(n)) time and O(n*d + K) space.
+
+        Notes
+        -----
+        Inputs are never modified. Missing NaNs must be imputed first. Feature category order is
+        sorted, with columns concatenated in input feature order. Unknown categories raise or
+        become zeros according to handle_unknown.
+        """
         X = self._validate(X)
         _require_samples(X, "OneHotEncoder")
         categories = []
@@ -428,7 +678,36 @@ class OneHotEncoder(BaseTransformer):
         return self
 
     def transform(self, X):
-        """Return the one-hot matrix, shape (n_samples, total number of categories)."""
+        """Return an independent one-hot encoded matrix.
+
+        Parameters
+        ----------
+        X : array_like, shape (n_samples, n_features)
+            Numeric matrix, or comparable categorical strings/numbers where supported.
+
+        Returns
+        -------
+        X_out : ndarray of float64, shape (n_samples, K), K = total fitted categories
+
+        Raises
+        ------
+        TypeError
+            Unsupported input or incomparable category types.
+        ValueError
+            Invalid strategy, shape, missing data or feature-count mismatch.
+        NotFittedError
+            Called before fitting (a RuntimeError, also a ValueError/AttributeError).
+
+        Complexity
+        ----------
+        O(n*K) time and auxiliary space, including the output.
+
+        Notes
+        -----
+        Inputs are never modified. Missing NaNs must be imputed first. Feature category order is
+        sorted, with columns concatenated in input feature order. Unknown categories raise or
+        become zeros according to handle_unknown. Empty sample axes are accepted.
+        """
         self._check_is_fitted("categories_")
         X = self._validate(X)
         self._check_n_features(X)
@@ -444,14 +723,33 @@ class OneHotEncoder(BaseTransformer):
         return np.hstack(blocks) if blocks else np.empty((X.shape[0], 0))
 
     def get_feature_names_out(self, input_features=None):
-        """Names of the output columns, e.g. "city_Adelaide".
+        """Return output names in the exact one-hot column order.
 
         Parameters
-        input_features : sequence of str, optional
-            Input column names; x0, x1, ... by default.
+        ----------
+        input_features : sequence of str or None
+            Input names, one per fitted feature; defaults to x0, x1, ... .
 
         Returns
-        names : ndarray of str, shape (total number of categories,)
+        -------
+        names : ndarray of str, shape (K,)
+            Names such as city_Adelaide.
+
+        Raises
+        ------
+        ValueError
+            Name count differs from the fitted feature count.
+        NotFittedError
+            Called before fitting (a RuntimeError, also a ValueError/AttributeError).
+
+        Complexity
+        ----------
+        O(K) time and output space, excluding string lengths.
+
+        Notes
+        -----
+        Does not modify the fitted categories or supplied names. No numeric reduction or NaN
+        processing.
         """
         self._check_is_fitted("categories_")
         if input_features is None:

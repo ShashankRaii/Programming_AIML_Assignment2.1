@@ -31,7 +31,30 @@ class _ParamsMixin:
     """get_params, a readable repr and the fitted/shape checks."""
 
     def get_params(self):
-        """Return the constructor arguments as a dict."""
+        """Return a shallow mapping of constructor parameters.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        params : dict
+            Parameter names mapped to current values; component objects are shared.
+
+        Raises
+        ------
+        TypeError, ValueError
+            The constructor has no inspectable signature.
+
+        Complexity
+        ----------
+        O(p) time and space for p parameters.
+
+        Notes
+        -----
+        No input data, learned-state changes or NaN handling.
+        """
         signature = inspect.signature(type(self).__init__)
         names = [
             name
@@ -62,20 +85,96 @@ class BaseTransformer(_ParamsMixin):
     """Base class for preprocessors. Subclasses implement fit and transform."""
 
     def fit(self, X, y=None):
+        """Abstract protocol method; subclasses must implement this operation.
+
+        Parameters
+        ----------
+        X : array_like, shape (n_samples, n_features)
+            Input forwarded to each component; its own validator defines allowed dtypes.
+        y : array_like, shape (n_samples,), or None
+            Forwarded to methods accepting a target; fit(X)-only stages receive X alone.
+
+        Returns
+        -------
+        No value
+            The base implementation raises NotImplementedError.
+
+        Raises
+        ------
+        NotImplementedError
+            Always, unless overridden by a subclass.
+
+        Complexity
+        ----------
+        O(1) time and space.
+
+        Notes
+        -----
+        This method neither mutates nor computes on X. Subclasses must document their contracts.
+        """
         raise NotImplementedError(f"{type(self).__name__} must implement fit")
 
     def transform(self, X):
+        """Abstract protocol method; subclasses must implement this operation.
+
+        Parameters
+        ----------
+        X : array_like, shape (n_samples, n_features)
+            Input forwarded to each component; its own validator defines allowed dtypes.
+
+        Returns
+        -------
+        No value
+            The base implementation raises NotImplementedError.
+
+        Raises
+        ------
+        NotImplementedError
+            Always, unless overridden by a subclass.
+
+        Complexity
+        ----------
+        O(1) time and space.
+
+        Notes
+        -----
+        This method neither mutates nor computes on X. Subclasses must document their contracts.
+        """
         raise NotImplementedError(f"{type(self).__name__} must implement transform")
 
     def fit_transform(self, X, y=None):
-        """Same as fit(X, y).transform(X).
+        """Fit this transformer, then transform the same X.
 
         Parameters
+        ----------
         X : array_like, shape (n_samples, n_features)
-        y : ignored
+            Input forwarded to each component; its own validator defines allowed dtypes.
+        y : array_like, shape (n_samples,), or None
+            Forwarded to methods accepting a target; fit(X)-only stages receive X alone.
 
         Returns
+        -------
         X_out : ndarray, shape (n_samples, n_features_out)
+            Shape and dtype follow the subclass.
+
+        Raises
+        ------
+        TypeError
+            Invalid component signature or unsupported final operation.
+        ValueError
+            Invalid shapes or values reported by a component.
+        NotImplementedError
+            Abstract fit/transform has not been overridden.
+
+        Complexity
+        ----------
+        Sum of fit and transform costs; no additional numerical working array.
+
+        Notes
+        -----
+        Built-in components preserve caller data; custom stages define their own mutation,
+        dtype, NaN and axis behavior. Methods use declared signatures to dispatch fit calls;
+        internal TypeErrors propagate without retry.
         """
         return _call_fit(self.fit, X, y).transform(X)
 
@@ -84,9 +183,61 @@ class BaseEstimator(_ParamsMixin):
     """Base class for models. Subclasses implement fit and predict."""
 
     def fit(self, X, y):
+        """Abstract protocol method; subclasses must implement this operation.
+
+        Parameters
+        ----------
+        X : array_like, shape (n_samples, n_features)
+            Input forwarded to each component; its own validator defines allowed dtypes.
+        y : array_like, shape (n_samples,), or None
+            Forwarded to methods accepting a target; fit(X)-only stages receive X alone.
+
+        Returns
+        -------
+        No value
+            The base implementation raises NotImplementedError.
+
+        Raises
+        ------
+        NotImplementedError
+            Always, unless overridden by a subclass.
+
+        Complexity
+        ----------
+        O(1) time and space.
+
+        Notes
+        -----
+        This method neither mutates nor computes on X. Subclasses must document their contracts.
+        """
         raise NotImplementedError(f"{type(self).__name__} must implement fit")
 
     def predict(self, X):
+        """Abstract protocol method; subclasses must implement this operation.
+
+        Parameters
+        ----------
+        X : array_like, shape (n_samples, n_features)
+            Input forwarded to each component; its own validator defines allowed dtypes.
+
+        Returns
+        -------
+        No value
+            The base implementation raises NotImplementedError.
+
+        Raises
+        ------
+        NotImplementedError
+            Always, unless overridden by a subclass.
+
+        Complexity
+        ----------
+        O(1) time and space.
+
+        Notes
+        -----
+        This method neither mutates nor computes on X. Subclasses must document their contracts.
+        """
         raise NotImplementedError(f"{type(self).__name__} must implement predict")
 
 
@@ -173,6 +324,29 @@ class Pipeline(_ParamsMixin):
 
     @property
     def named_steps(self):
+        """Return a shallow name-to-component mapping.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        steps : dict
+            A new mapping with references to the original components.
+
+        Raises
+        ------
+        None
+
+        Complexity
+        ----------
+        O(k) time and space for k stages.
+
+        Notes
+        -----
+        Does not fit, copy or modify the components.
+        """
         return dict(self.steps)
 
     def __len__(self):
@@ -192,15 +366,37 @@ class Pipeline(_ParamsMixin):
         return X
 
     def fit(self, X, y=None):
-        """Fit each step on the output of the previous one.
+        """Fit stages in sequence using previous transformed outputs.
 
         Parameters
+        ----------
         X : array_like, shape (n_samples, n_features)
-        y : array_like, shape (n_samples,), optional
-            Passed to every step; transformers ignore it.
+            Input forwarded to each component; its own validator defines allowed dtypes.
+        y : array_like, shape (n_samples,), or None
+            Forwarded to methods accepting a target; fit(X)-only stages receive X alone.
 
         Returns
+        -------
         self : Pipeline
+
+        Raises
+        ------
+        TypeError
+            Invalid component signature or unsupported final operation.
+        ValueError
+            Invalid shapes or values reported by a component.
+
+        Complexity
+        ----------
+        Sum of stage costs; temporary storage is bounded by stage outputs and their working
+        arrays.
+
+        Notes
+        -----
+        Built-in components preserve caller data; custom stages define their own mutation,
+        dtype, NaN and axis behavior. Methods use declared signatures to dispatch fit calls;
+        internal TypeErrors propagate without retry. A failed refit clears pipeline fitted
+        state.
         """
         self.__dict__.pop("fitted_", None)
         for _, step in self.steps[:-1]:
@@ -210,11 +406,38 @@ class Pipeline(_ParamsMixin):
         return self
 
     def fit_transform(self, X, y=None):
-        """Fit all steps and return the transformed X.
+        """Fit the transformer chain and return its final output.
+
+        Parameters
+        ----------
+        X : array_like, shape (n_samples, n_features)
+            Input forwarded to each component; its own validator defines allowed dtypes.
+        y : array_like, shape (n_samples,), or None
+            Forwarded to methods accepting a target; fit(X)-only stages receive X alone.
+
+        Returns
+        -------
+        result : array_like
+            Final stage output: transform usually (n, d_out), predict usually (n,).
 
         Raises
+        ------
         TypeError
-            If the last step has no transform (e.g. it is an estimator).
+            Invalid component signature or unsupported final operation.
+        ValueError
+            Invalid shapes or values reported by a component.
+
+        Complexity
+        ----------
+        Sum of stage costs; temporary storage is bounded by stage outputs and their working
+        arrays.
+
+        Notes
+        -----
+        Built-in components preserve caller data; custom stages define their own mutation,
+        dtype, NaN and axis behavior. Methods use declared signatures to dispatch fit calls;
+        internal TypeErrors propagate without retry. A failed refit clears pipeline fitted
+        state.
         """
         self.__dict__.pop("fitted_", None)
         last_name, last = self.steps[-1]
@@ -227,13 +450,38 @@ class Pipeline(_ParamsMixin):
         return result
 
     def transform(self, X):
-        """Pass X through every fitted step.
+        """Apply every stage in this fitted transformer chain.
+
+        Parameters
+        ----------
+        X : array_like, shape (n_samples, n_features)
+            Input forwarded to each component; its own validator defines allowed dtypes.
+
+        Returns
+        -------
+        result : array_like
+            Final stage output: transform usually (n, d_out), predict usually (n,).
 
         Raises
+        ------
         TypeError
-            If the last step has no transform.
+            Invalid component signature or unsupported final operation.
+        ValueError
+            Invalid shapes or values reported by a component.
         NotFittedError
-            If the pipeline has not been fitted.
+            Called before fitting (a RuntimeError, also a ValueError/AttributeError).
+
+        Complexity
+        ----------
+        Sum of stage costs; temporary storage is bounded by stage outputs and their working
+        arrays.
+
+        Notes
+        -----
+        Built-in components preserve caller data; custom stages define their own mutation,
+        dtype, NaN and axis behavior. Methods use declared signatures to dispatch fit calls;
+        internal TypeErrors propagate without retry. The pipeline itself must have completed
+        fitting.
         """
         self._check_is_fitted("fitted_")
         last_name, last = self.steps[-1]
@@ -242,11 +490,38 @@ class Pipeline(_ParamsMixin):
         return last.transform(self._transform_intermediate(X))
 
     def predict(self, X):
-        """Transform X with the earlier steps, then predict with the last one.
+        """Transform intermediate outputs and invoke the final estimator.
+
+        Parameters
+        ----------
+        X : array_like, shape (n_samples, n_features)
+            Input forwarded to each component; its own validator defines allowed dtypes.
+
+        Returns
+        -------
+        result : array_like
+            Final stage output: transform usually (n, d_out), predict usually (n,).
 
         Raises
+        ------
         TypeError
-            If the last step has no predict.
+            Invalid component signature or unsupported final operation.
+        ValueError
+            Invalid shapes or values reported by a component.
+        NotFittedError
+            Called before fitting (a RuntimeError, also a ValueError/AttributeError).
+
+        Complexity
+        ----------
+        Sum of stage costs; temporary storage is bounded by stage outputs and their working
+        arrays.
+
+        Notes
+        -----
+        Built-in components preserve caller data; custom stages define their own mutation,
+        dtype, NaN and axis behavior. Methods use declared signatures to dispatch fit calls;
+        internal TypeErrors propagate without retry. The pipeline itself must have completed
+        fitting.
         """
         self._check_is_fitted("fitted_")
         last_name, last = self.steps[-1]
@@ -295,6 +570,38 @@ class FeatureUnion(BaseTransformer):
         return np.hstack(blocks)
 
     def fit(self, X, y=None):
+        """Fit parallel transformers.
+
+        Parameters
+        ----------
+        X : array_like, shape (n_samples, n_features)
+            Input forwarded to each component; its own validator defines allowed dtypes.
+        y : array_like, shape (n_samples,), or None
+            Forwarded to methods accepting a target; fit(X)-only stages receive X alone.
+
+        Returns
+        -------
+        self : FeatureUnion
+
+        Raises
+        ------
+        TypeError
+            Invalid component signature or unsupported final operation.
+        ValueError
+            Invalid shapes or values reported by a component.
+        ValueError
+            Outputs are not 1-D/2-D or have inconsistent row counts when stacking.
+
+        Complexity
+        ----------
+        Sum of component costs, plus O(n_rows*total_width) time/space when concatenating.
+
+        Notes
+        -----
+        Built-in components preserve caller data; custom stages define their own mutation,
+        dtype, NaN and axis behavior. Methods use declared signatures to dispatch fit calls;
+        internal TypeErrors propagate without retry.
+        """
         self.__dict__.pop("n_transformers_", None)
         for _, step in self.transformer_list:
             _call_fit(step.fit, X, y)
@@ -302,11 +609,76 @@ class FeatureUnion(BaseTransformer):
         return self
 
     def transform(self, X):
-        """Return all transformer outputs stacked, shape (n_samples, total width)."""
+        """Concatenate parallel transformed outputs.
+
+        Parameters
+        ----------
+        X : array_like, shape (n_samples, n_features)
+            Input forwarded to each component; its own validator defines allowed dtypes.
+
+        Returns
+        -------
+        X_out : ndarray, shape (n_rows, sum(output_widths))
+            Common NumPy dtype; 1-D outputs become columns. NaNs are retained.
+
+        Raises
+        ------
+        TypeError
+            Invalid component signature or unsupported final operation.
+        ValueError
+            Invalid shapes or values reported by a component.
+        NotFittedError
+            Called before fitting (a RuntimeError, also a ValueError/AttributeError).
+        ValueError
+            Outputs are not 1-D/2-D or have inconsistent row counts when stacking.
+
+        Complexity
+        ----------
+        Sum of component costs, plus O(n_rows*total_width) time/space when concatenating.
+
+        Notes
+        -----
+        Built-in components preserve caller data; custom stages define their own mutation,
+        dtype, NaN and axis behavior. Methods use declared signatures to dispatch fit calls;
+        internal TypeErrors propagate without retry.
+        """
         self._check_is_fitted("n_transformers_")
         return self._stack([step.transform(X) for _, step in self.transformer_list])
 
     def fit_transform(self, X, y=None):
+        """Concatenate parallel transformed outputs.
+
+        Parameters
+        ----------
+        X : array_like, shape (n_samples, n_features)
+            Input forwarded to each component; its own validator defines allowed dtypes.
+        y : array_like, shape (n_samples,), or None
+            Forwarded to methods accepting a target; fit(X)-only stages receive X alone.
+
+        Returns
+        -------
+        X_out : ndarray, shape (n_rows, sum(output_widths))
+            Common NumPy dtype; 1-D outputs become columns. NaNs are retained.
+
+        Raises
+        ------
+        TypeError
+            Invalid component signature or unsupported final operation.
+        ValueError
+            Invalid shapes or values reported by a component.
+        ValueError
+            Outputs are not 1-D/2-D or have inconsistent row counts when stacking.
+
+        Complexity
+        ----------
+        Sum of component costs, plus O(n_rows*total_width) time/space when concatenating.
+
+        Notes
+        -----
+        Built-in components preserve caller data; custom stages define their own mutation,
+        dtype, NaN and axis behavior. Methods use declared signatures to dispatch fit calls;
+        internal TypeErrors propagate without retry.
+        """
         self.__dict__.pop("n_transformers_", None)
         blocks = [_fit_transform_one(step, X, y) for _, step in self.transformer_list]
         result = self._stack(blocks)
@@ -330,11 +702,37 @@ class MeanRegressor(BaseEstimator):
     """
 
     def fit(self, X, y):
-        """Store the mean of y.
+        """Mean target baseline: learn the baseline.
+
+        Parameters
+        ----------
+        X : array_like, shape (n_samples, n_features)
+            Real numeric matrix. NaNs/infinities are accepted in feature data; the example
+            estimators have ordinary floating-point limits.
+        y : array_like, shape (n_samples, ...)
+            Numeric targets pooled over all entries; NaNs are omitted.
+
+        Returns
+        -------
+        self : MeanRegressor
 
         Raises
+        ------
+        TypeError
+            Unsupported input/label types.
         ValueError
-            If X and y have different lengths or y has no non-NaN value.
+            Invalid shapes, mismatched sample/features, empty targets or insufficient valid
+            data.
+
+        Complexity
+        ----------
+        O(X.size + y.size) fit time/space; prediction O(X.size + n) time/space.
+
+        Notes
+        -----
+        Inputs are unchanged. This is an API demonstration, not a trained ML model. The
+        regressor pools numeric targets, omitting NaNs. Floating arithmetic has float64 limits;
+        labels have no reduction axis.
         """
         X = check_array(X, ensure_2d=True)
         y = check_array(y, dtype=np.float64)
@@ -347,7 +745,38 @@ class MeanRegressor(BaseEstimator):
         return self
 
     def predict(self, X):
-        """Return mean_ for every row, shape (n_samples,)."""
+        """Mean target baseline: return predictions.
+
+        Parameters
+        ----------
+        X : array_like, shape (n_samples, n_features)
+            Real numeric matrix. NaNs/infinities are accepted in feature data; the example
+            estimators have ordinary floating-point limits.
+
+        Returns
+        -------
+        predictions : ndarray of float64, shape (n_samples,)
+
+        Raises
+        ------
+        TypeError
+            Unsupported input/label types.
+        ValueError
+            Invalid shapes, mismatched sample/features, empty targets or insufficient valid
+            data.
+        NotFittedError
+            Called before fitting (a RuntimeError, also a ValueError/AttributeError).
+
+        Complexity
+        ----------
+        O(X.size + y.size) fit time/space; prediction O(X.size + n) time/space.
+
+        Notes
+        -----
+        Inputs are unchanged. This is an API demonstration, not a trained ML model. The
+        regressor pools numeric targets, omitting NaNs. Floating arithmetic has float64 limits;
+        labels have no reduction axis.
+        """
         self._check_is_fitted("mean_")
         X = check_array(X, ensure_2d=True)
         self._check_n_features(X)
@@ -388,6 +817,38 @@ class ThresholdClassifier(BaseEstimator):
         self.feature = feature
 
     def fit(self, X, y):
+        """Single-feature threshold classifier: learn the baseline.
+
+        Parameters
+        ----------
+        X : array_like, shape (n_samples, n_features)
+            Real numeric matrix. NaNs/infinities are accepted in feature data; the example
+            estimators have ordinary floating-point limits.
+        y : array_like, shape (n_samples,)
+            Exactly two finite numeric or string classes.
+
+        Returns
+        -------
+        self : ThresholdClassifier
+
+        Raises
+        ------
+        TypeError
+            Unsupported input/label types.
+        ValueError
+            Invalid shapes, mismatched sample/features, empty targets or insufficient valid
+            data.
+
+        Complexity
+        ----------
+        O(X.size + y.size) fit time/space; prediction O(X.size + n) time/space.
+
+        Notes
+        -----
+        Inputs are unchanged. This is an API demonstration, not a trained ML model. The
+        classifier ignores NaNs while fitting and predicts classes_[0] for a NaN feature.
+        Floating arithmetic has float64 limits; labels have no reduction axis.
+        """
         X = check_array(X, ensure_2d=True, dtype=np.float64)
         y = check_labels(y)
         check_same_length(X, y)
@@ -411,7 +872,39 @@ class ThresholdClassifier(BaseEstimator):
         return self
 
     def predict(self, X):
-        """Return labels, shape (n_samples,). Rows with NaN get classes_[0]."""
+        """Single-feature threshold classifier: return predictions.
+
+        Parameters
+        ----------
+        X : array_like, shape (n_samples, n_features)
+            Real numeric matrix. NaNs/infinities are accepted in feature data; the example
+            estimators have ordinary floating-point limits.
+
+        Returns
+        -------
+        predictions : ndarray, shape (n_samples,)
+            Original class-label dtype.
+
+        Raises
+        ------
+        TypeError
+            Unsupported input/label types.
+        ValueError
+            Invalid shapes, mismatched sample/features, empty targets or insufficient valid
+            data.
+        NotFittedError
+            Called before fitting (a RuntimeError, also a ValueError/AttributeError).
+
+        Complexity
+        ----------
+        O(X.size + y.size) fit time/space; prediction O(X.size + n) time/space.
+
+        Notes
+        -----
+        Inputs are unchanged. This is an API demonstration, not a trained ML model. The
+        classifier ignores NaNs while fitting and predicts classes_[0] for a NaN feature.
+        Floating arithmetic has float64 limits; labels have no reduction axis.
+        """
         self._check_is_fitted("threshold_")
         X = check_array(X, ensure_2d=True, dtype=np.float64)
         self._check_n_features(X)
