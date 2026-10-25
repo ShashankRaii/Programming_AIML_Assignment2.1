@@ -2,7 +2,8 @@
 
 Validation never modifies caller data. Array results may share memory with their
 inputs, so algorithms that write to their working arrays must first make a copy.
-Numerical utilities will be added in a later checkpoint.
+The second half of the module holds numerically stable helpers (softmax,
+logsumexp, sigmoid, pairwise distances and batching) shared by other modules.
 """
 
 import numpy as np
@@ -236,3 +237,215 @@ def check_callable(function):
     if not callable(function):
         raise TypeError(f"function must be callable; got {type(function).__name__}")
     return function
+
+
+# ---------------------------------------------------------------------------
+# Numerically stable helpers
+# ---------------------------------------------------------------------------
+
+
+def softmax(x, axis=-1):
+    """Numerically stable softmax along one axis.
+
+    Subtracts the maximum along ``axis`` before exponentiating, so large
+    inputs such as 1000 do not overflow.
+
+    Parameters
+    ----------
+    x : array_like, shape 
+        Real-valued scores with at least one dimension.
+    axis : int, default -1
+        Axis along which the output sums to 1.
+
+    Returns
+    -------
+    p : ndarray of float, same shape as x
+
+    Raises
+    ------
+    TypeError
+        If x is not real numeric.
+    ValueError
+        If x is scalar or ragged.
+
+    Complexity
+    ----------
+    Time O(n); auxiliary space O(n), where n is the number of elements.
+
+    Examples
+    --------
+    >>> softmax([1000.0, 1000.0])
+    array([0.5, 0.5])
+    """
+    x = check_array(x, dtype=np.float64)
+    if x.size == 0:
+        return x.copy()
+    m = np.max(x, axis=axis, keepdims=True)
+    m = np.where(np.isfinite(m), m, 0.0)  # avoids inf - inf = nan
+    e = np.exp(x - m)
+    with np.errstate(invalid="ignore"):
+        return e / np.sum(e, axis=axis, keepdims=True)
+
+
+def logsumexp(x, axis=None):
+    """
+    Parameters
+    ----------
+    x : array_like, shape (...,)
+    axis : int or None, default None
+        Axis to reduce. None reduces over all elements.
+
+    Returns
+    -------
+    out : float scalar or ndarray
+        0-d result when axis is None, otherwise x's shape with ``axis``
+        removed. All ``-inf`` or empty input gives ``-inf``.
+
+    Raises
+    ------
+    TypeError
+        If x is not real numeric.
+    ValueError
+        If x is scalar or ragged.
+
+    Complexity
+    ----------
+    Time O(n); auxiliary space O(n), where n is the number of elements.
+
+    Examples
+    float(logsumexp([1000.0, 1000.0]))  # 1000 + log(2)
+    1000.6931471805599
+    """
+    x = check_array(x, dtype=np.float64)
+    if x.size == 0:
+        with np.errstate(divide="ignore"):
+            return np.log(np.sum(np.exp(x), axis=axis))
+    m = np.max(x, axis=axis, keepdims=True)
+    m = np.where(np.isfinite(m), m, 0.0)  # handles all -inf and +inf
+    with np.errstate(divide="ignore"):
+        out = np.log(np.sum(np.exp(x - m), axis=axis, keepdims=True)) + m
+    return np.squeeze(out, axis=axis)
+
+
+def sigmoid(x):
+    """Numerically stable logistic sigmoid ``1 / (1 + exp(-x))
+
+    Parameters
+    ----------
+    x : array_like, shape (...,)
+
+    Returns
+    -------
+    s : ndarray of float, same shape as x
+        Values in [0, 1]. NaN stays NaN.
+
+    Raises
+    ------
+    TypeError
+        If x is not real numeric.
+    ValueError
+        If x is scalar or ragged.
+
+    Complexity
+    ----------
+    Time O(n); auxiliary space O(n), where n is the number of elements.
+
+    Examples
+    >>> sigmoid([0.0])
+    array([0.5])
+    """
+    x = check_array(x, dtype=np.float64)
+    out = np.empty_like(x)
+    pos = x >= 0
+    neg = ~pos  # NaN lands here and stays NaN
+    out[pos] = 1.0 / (1.0 + np.exp(-x[pos]))
+    ex = np.exp(x[neg])
+    out[neg] = ex / (1.0 + ex)
+    return out
+
+
+def euclidean_distances(A, B, squared=False):
+    """Pairwise Euclidean distances between the rows of A and B.
+
+    Parameters
+    ----------
+    A : array_like, shape (n_samples_a, n_features)
+        First set of points.
+    B : array_like, shape (n_samples_b, n_features)
+        Second set of points.
+    squared : bool, default False
+        Return squared distances.
+
+    Returns
+    -------
+    D : ndarray of float, shape (n_samples_a, n_samples_b)
+
+    Raises
+    ------
+    TypeError
+        If A or B is not real numeric.
+    ValueError
+        If A or B is not 2-D, or their feature counts differ.
+
+    Complexity
+    ----------
+    Time O(n_a * n_b * d); auxiliary space O(n_a * n_b).
+
+    Examples
+    >>> euclidean_distances([[0, 0]], [[3, 4]])
+    array([[5.]])
+    """
+    A = check_array(A, ensure_2d=True, dtype=np.float64)
+    B = check_array(B, ensure_2d=True, dtype=np.float64)
+    if A.shape[1] != B.shape[1]:
+        raise ValueError(
+            f"A and B must have the same number of features; got {A.shape[1]} and {B.shape[1]}"
+        )
+    a2 = np.sum(A**2, axis=1)[:, None]  # (n_a, 1)
+    b2 = np.sum(B**2, axis=1)[None, :]  # (1, n_b)
+    d2 = np.maximum(a2 + b2 - 2.0 * (A @ B.T), 0.0)
+    return d2 if squared else np.sqrt(d2)
+
+
+def batch_iterator(X, batch_size):
+    """Yield consecutive batches of samples from X.
+
+    Parameters
+    ----------
+    X : array_like, shape (n_samples, ...)
+        Numeric data split along axis 0. Its dtype is preserved.
+    batch_size : int
+        Samples per batch; must be at least 1.
+
+    Returns
+    -------
+    batches : generator of ndarray, shape (<= batch_size, ...)
+        Views (slices) of the validated X; X is never modified.
+
+    Raises
+    ------
+    TypeError
+        If batch_size is not an integer or X is not real numeric.
+    ValueError
+        If batch_size < 1, or X is scalar or ragged.
+
+    Complexity
+    ----------
+    Time O(n_samples / batch_size) slices; auxiliary space O(1).
+
+    Examples
+    >>> [b.tolist() for b in batch_iterator([1, 2, 3, 4, 5], 2)]
+    [[1, 2], [3, 4], [5]]
+    """
+    X = check_array(X)
+    if isinstance(batch_size, (bool, np.bool_)) or not isinstance(batch_size, (int, np.integer)):
+        raise TypeError(f"batch_size must be an integer; got {type(batch_size).__name__}")
+    if batch_size < 1:
+        raise ValueError(f"batch_size must be at least 1; got {batch_size}")
+
+    def _batches():
+        # Loop over batch start positions only; slicing itself is vectorised.
+        for start in range(0, X.shape[0], batch_size):
+            yield X[start : start + batch_size]
+
+    return _batches()
