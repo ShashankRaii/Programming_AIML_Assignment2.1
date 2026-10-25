@@ -3,6 +3,53 @@
 import numpy as np
 import pytest
 
+
+def test_distances_preserve_small_separations_at_large_offsets():
+    from numcompute.utils import euclidean_distances
+    A = np.array([[1e8, 1e8], [1e8 + 3, 1e8 + 4]])
+    np.testing.assert_array_equal(euclidean_distances(A, A), [[0, 5], [5, 0]])
+    assert euclidean_distances(A[:1], [[1e8 + 1, 1e8]]).item() == 1
+
+
+def test_distances_extremes_empty_features_and_validation():
+    from numcompute.utils import euclidean_distances
+    assert euclidean_distances([[0, 0]], [[3e200, 4e200]]).item() == pytest.approx(5e200)
+    assert euclidean_distances([[0]], [[1e-200]]).item() == 1e-200
+    assert np.isinf(euclidean_distances([[1e200]], [[0]], squared=True)).all()
+    np.testing.assert_array_equal(euclidean_distances(np.empty((2, 0)), np.empty((3, 0))), 0)
+    for bad in [np.nan, np.inf]:
+        with pytest.raises(ValueError):
+            euclidean_distances([[bad]], [[0]])
+
+
+def test_distance_blocks_match_direct_small_reference_without_mutation():
+    from numcompute.utils import euclidean_distances
+    A = np.arange(2400.0).reshape(400, 6)[:, ::2]
+    B = A[::100]
+    before = A.copy()
+    expected = np.sqrt(np.sum((A[:, None, :] - B[None, :, :])**2, axis=2))
+    np.testing.assert_allclose(euclidean_distances(A, B), expected)
+    np.testing.assert_array_equal(A, before)
+
+
+def test_activation_infinities_nan_slices_and_empty_axis_shapes():
+    from numcompute.utils import softmax, logsumexp
+    X = np.array([[np.inf, 1000, np.inf], [-np.inf, -np.inf, -np.inf],
+                  [np.nan, 1, 2]])
+    np.testing.assert_array_equal(softmax(X)[0], [.5, 0, .5])
+    assert np.isnan(softmax(X)[1:]).all()
+    np.testing.assert_array_equal(logsumexp(X, axis=1), [np.inf, -np.inf, np.nan])
+    assert logsumexp([np.inf, 1000]) == np.inf
+    assert logsumexp(np.empty((2, 0)), axis=1).shape == (2,)
+    assert np.isneginf(logsumexp(np.empty((2, 0)), axis=1)).all()
+
+
+def test_activations_handle_extreme_finite_scores_without_warnings():
+    from numcompute.utils import softmax, logsumexp
+    x = np.array([np.finfo(float).max, -np.finfo(float).max])
+    np.testing.assert_array_equal(softmax(x), [1, 0])
+    assert logsumexp(x) == x[0]
+
 from numcompute.utils import (
     batch_iterator,
     euclidean_distances,

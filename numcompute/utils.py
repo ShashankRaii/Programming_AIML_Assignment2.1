@@ -244,6 +244,26 @@ def check_callable(function):
 # ---------------------------------------------------------------------------
 
 
+def _activation_axis(axis, ndim):
+    """Validate a single reduction axis, including for empty arrays."""
+    if axis is None:
+        return None
+    if isinstance(axis, (bool, np.bool_)) or not isinstance(axis, (int, np.integer)):
+        raise TypeError("axis must be an integer or None")
+    if not -ndim <= axis < ndim:
+        raise ValueError(f"axis {axis} is out of bounds for {ndim} dimensions")
+    return int(axis)
+
+
+def _shifted_exponentials(x, axis):
+    """Do not exponentiate a slice whose maximum is NaN or infinite."""
+    maximum = np.max(x, axis=axis, keepdims=True)
+    shifted = np.full_like(x, -np.inf)
+    with np.errstate(over="ignore", under="ignore"):
+        np.subtract(x, maximum, out=shifted, where=np.isfinite(maximum))
+        return maximum, np.exp(shifted)
+
+
 def softmax(x, axis=-1):
     """Numerically stable softmax along one axis.
 
@@ -252,21 +272,25 @@ def softmax(x, axis=-1):
 
     Parameters
     ----------
-    x : array_like, shape 
+    x : array_like, shape (...,)
         Real-valued scores with at least one dimension.
-    axis : int, default -1
-        Axis along which the output sums to 1.
+    axis : int or None, default -1
+        Normalization axis; None normalizes all entries together.
 
     Returns
     -------
     p : ndarray of float, same shape as x
+        Independent float64 output. Positive infinities share probability
+        equally; a NaN or all-negative-infinity slice becomes all NaN.
+        Empty inputs return an independent empty array. Inputs are unchanged.
 
     Raises
     ------
     TypeError
         If x is not real numeric.
     ValueError
-        If x is scalar or ragged.
+        If x is scalar/ragged or axis is out of bounds. Invalid axis types
+        raise TypeError. Undefined slices return NaNs without warnings.
 
     Complexity
     ----------
@@ -278,17 +302,23 @@ def softmax(x, axis=-1):
     array([0.5, 0.5])
     """
     x = check_array(x, dtype=np.float64)
+    axis = _activation_axis(axis, x.ndim)
     if x.size == 0:
         return x.copy()
-    m = np.max(x, axis=axis, keepdims=True)
-    m = np.where(np.isfinite(m), m, 0.0)  # avoids inf - inf = nan
-    e = np.exp(x - m)
-    with np.errstate(invalid="ignore"):
-        return e / np.sum(e, axis=axis, keepdims=True)
+    m, e = _shifted_exponentials(x, axis)
+    total = np.sum(e, axis=axis, keepdims=True)
+    result = np.full_like(x, np.nan)
+    np.divide(e, total, out=result, where=total > 0)
+    positive = np.isposinf(x)
+    count = positive.sum(axis=axis, keepdims=True)
+    shares = np.zeros_like(x)
+    np.divide(positive, count, out=shares, where=count > 0)
+    return np.where(np.isnan(m), np.nan, np.where(count > 0, shares, result))
 
 
 def logsumexp(x, axis=None):
-    """
+    """Reduce log(sum(exp(x))) without overflowing intermediate exponentials.
+
     Parameters
     ----------
     x : array_like, shape (...,)
@@ -299,31 +329,35 @@ def logsumexp(x, axis=None):
     -------
     out : float scalar or ndarray
         0-d result when axis is None, otherwise x's shape with ``axis``
-        removed. All ``-inf`` or empty input gives ``-inf``.
+        removed. All ``-inf`` or an empty reduction gives ``-inf``; a slice
+        with +inf gives +inf; NaN propagates. Inputs are unchanged and the
+        output is float64. Unrepresentable results become infinity silently.
 
     Raises
     ------
     TypeError
         If x is not real numeric.
     ValueError
-        If x is scalar or ragged.
+        If x is scalar/ragged or axis is out of bounds. Invalid axis types
+        raise TypeError.
 
     Complexity
     ----------
     Time O(n); auxiliary space O(n), where n is the number of elements.
 
     Examples
-    float(logsumexp([1000.0, 1000.0]))  # 1000 + log(2)
+    >>> float(logsumexp([1000.0, 1000.0]))
     1000.6931471805599
     """
     x = check_array(x, dtype=np.float64)
+    axis = _activation_axis(axis, x.ndim)
     if x.size == 0:
         with np.errstate(divide="ignore"):
             return np.log(np.sum(np.exp(x), axis=axis))
-    m = np.max(x, axis=axis, keepdims=True)
-    m = np.where(np.isfinite(m), m, 0.0)  # handles all -inf and +inf
-    with np.errstate(divide="ignore"):
-        out = np.log(np.sum(np.exp(x - m), axis=axis, keepdims=True)) + m
+    m, e = _shifted_exponentials(x, axis)
+    with np.errstate(divide="ignore", over="ignore"):
+        out = np.log(np.sum(e, axis=axis, keepdims=True)) + np.where(np.isfinite(m), m, 0)
+    out = np.where(np.isfinite(m), out, m)
     return np.squeeze(out, axis=axis)
 
 
@@ -378,33 +412,48 @@ def euclidean_distances(A, B, squared=False):
 
     Returns
     -------
-    D : ndarray of float, shape (n_samples_a, n_samples_b)
+    D : ndarray of float64, shape (n_samples_a, n_samples_b)
+        Independent distances. Inputs are unchanged. Non-finite inputs are
+        rejected; an unrepresentable distance or squared distance becomes
+        infinity without a warning. Zero-feature points have zero distance.
 
     Raises
     ------
     TypeError
-        If A or B is not real numeric.
+        If A/B is not real numeric or squared is not boolean.
     ValueError
-        If A or B is not 2-D, or their feature counts differ.
+        If A/B is not 2-D, contains NaN/inf, or feature counts differ.
 
     Complexity
     ----------
-    Time O(n_a * n_b * d); auxiliary space O(n_a * n_b).
+    Time O(n_a * n_b * d). Output space O(n_a * n_b); temporary difference
+    blocks use O(max(d, 262144)) elements, plus input validation/conversion.
+    Block loops bound memory; each block is computed with NumPy broadcasting
+    and a scaled hypot reduction, avoiding cancellation of squared norms.
 
     Examples
     >>> euclidean_distances([[0, 0]], [[3, 4]])
     array([[5.]])
     """
-    A = check_array(A, ensure_2d=True, dtype=np.float64)
-    B = check_array(B, ensure_2d=True, dtype=np.float64)
+    A = check_array(A, ensure_2d=True, dtype=np.float64, allow_nan=False, allow_inf=False)
+    B = check_array(B, ensure_2d=True, dtype=np.float64, allow_nan=False, allow_inf=False)
+    if not isinstance(squared, (bool, np.bool_)):
+        raise TypeError("squared must be boolean")
     if A.shape[1] != B.shape[1]:
         raise ValueError(
             f"A and B must have the same number of features; got {A.shape[1]} and {B.shape[1]}"
         )
-    a2 = np.sum(A**2, axis=1)[:, None]  # (n_a, 1)
-    b2 = np.sum(B**2, axis=1)[None, :]  # (1, n_b)
-    d2 = np.maximum(a2 + b2 - 2.0 * (A @ B.T), 0.0)
-    return d2 if squared else np.sqrt(d2)
+    result = np.empty((len(A), len(B)), dtype=np.float64)
+    block_size = max(1, int(np.sqrt(262144 // max(1, A.shape[1]))))
+    for i in range(0, len(A), block_size):
+        for j in range(0, len(B), block_size):
+            with np.errstate(over="ignore", under="ignore"):
+                delta = A[i:i + block_size, None, :] - B[None, j:j + block_size, :]
+                distances = np.hypot.reduce(delta, axis=2, initial=0.0)
+                result[i:i + block_size, j:j + block_size] = (
+                    distances**2 if squared else distances
+                )
+    return result
 
 
 def batch_iterator(X, batch_size):
