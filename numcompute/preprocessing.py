@@ -27,30 +27,26 @@ def _require_samples(X, name):
         raise ValueError(f"{name}.fit requires at least one sample; got shape {X.shape}")
 
 
-def _rms(dev, counts):
-    """Root mean square of each column of dev, without overflowing."""
-    # Dividing by the largest |dev| before squaring keeps 1e308-sized values
-    # finite and stops tiny values from underflowing to 0.
-    peak = np.abs(dev).max(axis=0, initial=0.0)
-    safe_peak = np.where(peak > 0, peak, 1.0)
-    return peak * np.sqrt(((dev / safe_peak) ** 2).sum(axis=0) / counts)
-
-
 def _column_moments(X):
     """Mean, population std and non-NaN count of every column, ignoring NaNs."""
     valid = ~np.isnan(X)
     counts = valid.sum(axis=0)
     safe_counts = np.maximum(counts, 1)
-    # Divide first, then sum, so the total cannot overflow.
-    mean = np.where(valid, X / safe_counts, 0.0).sum(axis=0)
-    with np.errstate(over="ignore", invalid="ignore"):
-        dev = np.where(valid, X - mean, 0.0)
-    if not np.all(np.isfinite(dev)):
-        # Very large values of opposite sign overflow X - mean; halving both
-        # avoids that, and the std of the halves is exactly std / 2.
-        half_dev = np.where(valid, X / 2 - mean / 2, 0.0)
-        return mean, 2 * _rms(half_dev, safe_counts), counts
-    return mean, _rms(dev, safe_counts), counts
+    lo = np.where(valid, X, np.inf).min(axis=0)
+    hi = np.where(valid, X, -np.inf).max(axis=0)
+    lo, hi = np.where(counts, lo, 0.0), np.where(counts, hi, 0.0)
+    center = lo / 2 + hi / 2
+    dev = np.where(valid, X - center, 0.0)
+    peak = np.abs(dev).max(axis=0, initial=0.0)
+    unit = dev / np.where(peak > 0, peak, 1.0)
+    offset = np.clip(unit.sum(axis=0) / safe_counts, -1.0, 1.0)
+    with np.errstate(over="ignore"):
+        mean = np.clip(center + offset * peak, lo, hi)
+    mean = np.where(lo == hi, lo, mean)
+    deviations = np.where(valid, unit - offset, 0.0)
+    # Midrange centering bounds the population standard deviation by peak.
+    rms = np.minimum(np.sqrt((deviations**2).sum(axis=0) / safe_counts), 1.0)
+    return mean, peak * rms, counts
 
 
 def _safe_scale(scale, reference):
@@ -144,8 +140,9 @@ class StandardScaler(BaseTransformer):
 class MinMaxScaler(BaseTransformer):
     """Scale each column linearly into feature_range, (0, 1) by default.
 
-    A constant column maps to the lower bound. NaNs are ignored in fit and
-    stay NaN in transform.
+    A constant training column maps to the lower bound; subsequent changes
+    use a unit data range. NaNs are ignored in fit and stay NaN in transform.
+    Features fitted with no valid values transform to NaN.
 
     Parameters
     feature_range : (lo, hi), default (0, 1)
@@ -199,8 +196,7 @@ class MinMaxScaler(BaseTransformer):
         data_max = np.where(valid, X, -np.inf).max(axis=0)
         self.data_min_ = np.where(has_data, data_min, np.nan)
         self.data_max_ = np.where(has_data, data_max, np.nan)
-        # max - min can overflow (1e308 - -1e308), half of it never does.
-        # transform works with these halves; data_range_ is just for display.
+        # Halves are a fallback only: halving subnormal ranges loses data.
         self._half_range = np.where(has_data, data_max / 2 - data_min / 2, 0.0)
         with np.errstate(over="ignore"):
             self.data_range_ = self.data_max_ - self.data_min_
@@ -213,11 +209,19 @@ class MinMaxScaler(BaseTransformer):
         lo, hi = self._range()
         X = _check_numeric(X)
         self._check_n_features(X)
-        half_range = np.where(self._half_range == 0, 1.0, self._half_range)
-        dmin = np.nan_to_num(self.data_min_)
-        with np.errstate(over="ignore"):
-            unit = (X / 2 - dmin / 2) / half_range
-        out = lo + unit * (hi - lo)
+        denominator = np.where(self.data_range_ == 0, 1.0, self.data_range_)
+        with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+            unit = (X - self.data_min_) / denominator
+            fallback = (X / 2 - self.data_min_ / 2) / np.where(
+                np.isinf(denominator), self._half_range, denominator / 2
+            )
+            unit = np.where(np.isinf(denominator) | np.isinf(unit), fallback, unit)
+            # Convex interpolation avoids an overflowing target hi - lo.
+            inside = lo * (1 - unit) + hi * unit
+            outside = lo + unit * (hi - lo)
+            out = np.where((unit >= 0) & (unit <= 1), inside, outside)
+            alternative = (lo / 2 + unit * (hi / 2 - lo / 2)) * 2
+            out = np.where(np.isinf(out) | np.isnan(out), alternative, out)
         if self.clip:
             out = np.clip(out, lo, hi)
         return out

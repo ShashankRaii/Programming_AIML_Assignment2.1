@@ -174,6 +174,34 @@ def test_minmax_nan_and_extremes():
     np.testing.assert_allclose(extreme.ravel(), [1.0, 0.0, 0.5])
 
 
+def test_scalers_float_max_constant_and_subnormal_range():
+    maximum = np.finfo(float).max
+    np.testing.assert_array_equal(
+        StandardScaler().fit_transform(np.full((3, 1), maximum)), np.zeros((3, 1))
+    )
+    tiny = np.nextafter(0.0, 1.0)
+    np.testing.assert_array_equal(
+        MinMaxScaler().fit_transform([[0.0], [tiny]]).ravel(), [0, 1]
+    )
+    np.testing.assert_allclose(
+        StandardScaler().fit_transform([[-maximum], [maximum]]).ravel(), [-1, 1]
+    )
+
+
+def test_minmax_constant_extrapolation_extreme_target_and_missing_feature():
+    scaler = MinMaxScaler().fit([[5.0], [5.0]])
+    np.testing.assert_array_equal(scaler.transform([[5.0], [6.0]]).ravel(), [0, 1])
+    maximum = np.finfo(float).max
+    out = MinMaxScaler(feature_range=(-maximum, maximum)).fit_transform([[0.], [1.], [2.]])
+    np.testing.assert_array_equal(out.ravel(), [-maximum, 0, maximum])
+    assert np.isnan(MinMaxScaler().fit([[np.nan]]).transform([[2.]])).all()
+
+
+def test_minmax_finite_extrapolation_with_overflowing_intermediate_difference():
+    scaler = MinMaxScaler().fit([[1e308], [1.5e308]])
+    np.testing.assert_allclose(scaler.transform([[-1e308]]), [[-4]])
+
+
 @pytest.mark.parametrize("bad", [(1, 0), (0, 0), (0, np.inf), "ab", (1,)])
 def test_minmax_invalid_feature_range(bad):
     with pytest.raises(ValueError, match="feature_range"):
