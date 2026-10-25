@@ -1,5 +1,11 @@
 # Member B implementation and acceptance review
 
+**25 October integration update:** the original checkpoint-7 evidence below is
+preserved as history. All team modules are now merged, benchmarks were rerun,
+and the post-merge audit fixes are documented in [audit closure](audit_fixes.md).
+The current suite passes 764 checks on both NumPy 1.24.4 and 2.4.6. Notebook
+reverification and hosted CI are pending; report/video work follows next.
+
 Member B's sorting/searching, ranking and statistics modules are implemented and
 verified together as of checkpoint 7. This record maps their requirements to
 code and tests. Benchmark measurements, notebook, report and video evidence

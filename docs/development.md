@@ -299,9 +299,34 @@ files remain within 100 characters per line. The environment is unchanged.
   utilities, benchmarks, the notebook, report, and video materials remain
   scheduled for later checkpoints.
 
-## Next checkpoint
+## Next checkpoint recorded after checkpoint 7
 
 Checkpoint 8 implements CSV loading and chunked input with tests and docstrings.
 Before starting it, fetch the remote and inspect new contributions.
 Each checkpoint ends with local commits and a pause for user review. Branch
 publication and the final pull request remain scheduled after final verification.
+
+## Post-merge integration and audit closure — 25 October 2026
+
+The group merged PRs #1, #2, #4 and #3, reaching main a3c6c52. Rugved then
+requested that the audit fixes be developed directly on local main. The earlier
+checkpoint entries remain a historical record; their future-work statements
+do not describe the current implementation state.
+
+Small follow-up commits fixed transformer protocol dispatch, fitted-state
+consistency, distance cancellation, activation infinities, extreme/tiny scaler
+inputs, exact mixed numeric labels, regression overflow and masked integer CSV
+loading. Further commits completed public API contracts, mixed-data integration
+tests, benchmark methodology and automated repository checks.
+
+The full suite now passes 764 tests/doctests without skips on both NumPy 1.24.4
+and 2.4.6 with Python 3.11.13. A wheel was installed and imported outside the
+checkout. Both README examples and the full 18-case/five-round benchmark run
+completed. New tests reproduce genuine failures; no artificial buggy commits
+were introduced. See [audit closure](audit_fixes.md) for counterexamples, test
+results, measurements and remaining verification limitations.
+
+The requested notebook edit and later fresh-kernel run were declined. The team
+notebook remains unchanged; README and integration tests contain the combined
+numeric/categorical example. Post-fix notebook execution and hosted CI remain
+pending. The report and video are the next user-directed phase.

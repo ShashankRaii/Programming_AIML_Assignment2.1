@@ -1,6 +1,7 @@
 """CSV loading utilities (delimiters, missing values, chunked streaming).
 
-Missing cells can be filled with a placeholder or the row that contain them can be dropped. Large files can be read in chunks with load_csv_chunks.
+Missing cells can be filled with a placeholder or their rows can be dropped.
+Large files can be read in chunks with load_csv_chunks.
 
 Functions:-
 read_header
