@@ -1,8 +1,9 @@
 """Loop vs vectorised benchmarks for NumCompute.
 
-For every operation a pure-Python loop implementation is compared with the
-vectorised NumCompute function on the same data. Outputs are checked for
-agreement before timing.
+Loop implementations are compared with NumCompute on the same data. For
+gradients, the objective uses NumPy in both cases; only the callable dispatch
+changes from per-coordinate evaluations to one batch. Outputs are checked for
+agreement before timing. Input/list preparation is outside the timed calls.
 """
 
 import argparse
@@ -160,6 +161,10 @@ def run(sizes, grad_sizes, repeats):
                 "loop_s": loop_s,
                 "vectorised_s": vec_s,
                 "speedup": loop_s / vec_s if vec_s > 0 else float("inf"),
+                "loop_mean_s": by_name["loop"]["mean"],
+                "loop_std_s": by_name["loop"]["std"],
+                "vectorised_mean_s": by_name["vectorised"]["mean"],
+                "vectorised_std_s": by_name["vectorised"]["std"],
             }
         )
         print(
@@ -175,9 +180,10 @@ def run(sizes, grad_sizes, repeats):
     return results
 
 
-def write_outputs(results, out_dir):
+def write_outputs(results, out_dir, repeats):
     out_dir.mkdir(parents=True, exist_ok=True)
-    fields = ["operation", "n", "loop_s", "vectorised_s", "speedup"]
+    fields = ["operation", "n", "loop_s", "vectorised_s", "speedup",
+              "loop_mean_s", "loop_std_s", "vectorised_mean_s", "vectorised_std_s"]
     with open(out_dir / "results.csv", "w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=fields)
         writer.writeheader()
@@ -190,7 +196,13 @@ def write_outputs(results, out_dir):
     lines = [
         "# Benchmark results",
         "",
-        "Best of repeated runs (seconds per call), seed 42.",
+        f"Best of {repeats} timed rounds (seconds per call); one call per round, "
+        "one untimed warmup and an output equality check per implementation. Seed 42.",
+        "",
+        "Inputs and Python-list conversion are prepared before timing. CSV includes "
+        "mean/std across rounds. Gradient rows compare ordinary vs batched callable "
+        "evaluation, with the same NumPy objective in both versions. Smaller gradient "
+        "dimensions bound the quadratic perturbation storage; distances use 10 reference points.",
         "",
         "| Operation | n | Loop (s) | Vectorised (s) | Speed-up |",
         "| --- | ---: | ---: | ---: | ---: |",
@@ -215,7 +227,7 @@ def main():
     # grad builds a (2n x n) perturbation matrix, so dimensions stay smaller.
     grad_sizes = [100, 500] if args.quick else [100, 500, 2_000]
     results = run(sizes, grad_sizes, args.repeats)
-    write_outputs(results, args.out)
+    write_outputs(results, args.out, args.repeats)
     print(f"\nWrote {args.out / 'results.csv'} and {args.out / 'results.md'}")
 
 
