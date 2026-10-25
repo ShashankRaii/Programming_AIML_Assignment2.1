@@ -4,6 +4,11 @@ All metrics validate their inputs with the shared helpers in ``utils``:
 labels go through ``check_labels`` (so string, integer and boolean labels all
 work) and continuous values go through ``check_array``. Counting is done with
 ``np.bincount`` on encoded labels, so there are no Python loops over samples.
+Unsafe mixed numeric label dtypes use exact object-array comparisons rather
+than rounding distinct integers to float. Inputs are never modified. Regression
+computations use float64; integers beyond its precision may round. MSE/MAE/RMSE
+rescale normalized residuals, returning infinity silently only when the final
+result is unrepresentable (and zero when it underflows).
 
 When a metric is undefined because a denominator is zero (for example
 precision when nothing was predicted positive), it returns 0.0 and emits an
@@ -45,14 +50,44 @@ def _check_label_pair(y_true, y_pred):
     check_same_length(y_true, y_pred)
     if y_true.shape[0] == 0:
         raise ValueError("y_true and y_pred must contain at least one sample")
-    true_is_text = y_true.dtype.kind in "USO"
-    pred_is_text = y_pred.dtype.kind in "USO"
-    if true_is_text != pred_is_text:
+    return _align_labels(y_true, y_pred)
+
+
+def _align_labels(*arrays):
+    """Preserve Python numeric comparisons when NumPy promotion would round."""
+    text = [a.dtype.kind in "US" for a in arrays]
+    for i, array in enumerate(arrays):
+        if array.dtype.kind == "O":
+            kinds = {isinstance(v, (str, bytes)) for v in array}
+            if len(kinds) > 1:
+                raise TypeError("labels must not mix numbers and strings")
+            text[i] = bool(kinds and True in kinds)
+    if any(text) and not all(text):
         raise TypeError(
-            f"y_true and y_pred must both be numeric or both be strings; "
-            f"got dtypes {y_true.dtype} and {y_pred.dtype}"
+            "labels must both be numeric or both be strings across all inputs"
         )
-    return y_true, y_pred
+    dtype = np.result_type(*(a.dtype for a in arrays))
+    unsafe = dtype.kind == "O"
+    if dtype.kind == "f":
+        unsafe = any(
+            a.dtype.kind in "iu"
+            and np.iinfo(a.dtype).bits - (a.dtype.kind == "i") > np.finfo(dtype).nmant + 1
+            for a in arrays
+        )
+    return tuple(a.astype(object) for a in arrays) if unsafe else arrays
+
+
+def _positive_mask(labels, pos_label):
+    """Validate and exactly compare a scalar positive label."""
+    value = np.asarray(pos_label)
+    if value.ndim != 0:
+        raise TypeError("pos_label must be a scalar label")
+    candidate = check_labels(value.reshape(1))
+    try:
+        aligned, candidate = _align_labels(labels, candidate)
+    except TypeError as exc:
+        raise ValueError("pos_label must have a compatible label type") from exc
+    return aligned == candidate[0]
 
 
 def _encode(y_true, y_pred, labels=None):
@@ -68,6 +103,7 @@ def _encode(y_true, y_pred, labels=None):
     classes = check_labels(labels)
     if classes.shape[0] == 0:
         raise ValueError("labels must contain at least one label")
+    y_true, y_pred, classes = _align_labels(y_true, y_pred, classes)
     if np.unique(classes).shape[0] != classes.shape[0]:
         raise ValueError("labels must not contain duplicates")
     order = np.argsort(classes, kind="stable")
@@ -200,10 +236,10 @@ def _prf_counts(y_true, y_pred, average, pos_label):
                 f"average='binary' needs at most 2 classes; got {present.shape[0]}. "
                 "Use average='macro' or 'micro' for multi-class data."
             )
-        if present.shape[0] == 2 and not np.any(present == pos_label):
+        if present.shape[0] == 2 and not np.any(_positive_mask(present, pos_label)):
             raise ValueError(f"pos_label={pos_label!r} is not one of the labels {present}")
-        true_pos = y_true == pos_label
-        pred_pos = y_pred == pos_label
+        true_pos = _positive_mask(y_true, pos_label)
+        pred_pos = _positive_mask(y_pred, pos_label)
         tp = np.count_nonzero(true_pos & pred_pos)
         fp = np.count_nonzero(~true_pos & pred_pos)
         fn = np.count_nonzero(true_pos & ~pred_pos)
@@ -358,6 +394,18 @@ def _check_regression(y_true, y_pred):
     return y_true, y_pred
 
 
+def _scaled_residuals(y_true, y_pred):
+    """Return residuals/peak, peak and factor without overflowing subtraction."""
+    with np.errstate(over="ignore"):
+        residual = y_true - y_pred
+    factor = 1.0
+    if not np.isfinite(residual).all():
+        residual = y_true / 2 - y_pred / 2
+        factor = 2.0
+    peak = float(np.max(np.abs(residual)))
+    return residual / (peak or 1.0), peak, factor
+
+
 def mse(y_true, y_pred):
     """Mean squared error ``mean((y_true - y_pred) ** 2)``.
 
@@ -389,7 +437,9 @@ def mse(y_true, y_pred):
     2.5
     """
     y_true, y_pred = _check_regression(y_true, y_pred)
-    return float(np.mean((y_true - y_pred) ** 2))
+    unit, peak, factor = _scaled_residuals(y_true, y_pred)
+    with np.errstate(over="ignore", under="ignore"):
+        return float((peak * np.mean(unit**2)) * peak * factor**2)
 
 
 def mae(y_true, y_pred):
@@ -423,7 +473,9 @@ def mae(y_true, y_pred):
     1.5
     """
     y_true, y_pred = _check_regression(y_true, y_pred)
-    return float(np.mean(np.abs(y_true - y_pred)))
+    unit, peak, factor = _scaled_residuals(y_true, y_pred)
+    with np.errstate(over="ignore"):
+        return float(peak * np.mean(np.abs(unit)) * factor)
 
 
 def rmse(y_true, y_pred):
@@ -456,7 +508,10 @@ def rmse(y_true, y_pred):
     >>> rmse([0.0, 0.0], [3.0, 3.0])
     3.0
     """
-    return float(np.sqrt(mse(y_true, y_pred)))
+    y_true, y_pred = _check_regression(y_true, y_pred)
+    unit, peak, factor = _scaled_residuals(y_true, y_pred)
+    with np.errstate(over="ignore", under="ignore"):
+        return float(peak * np.sqrt(np.mean(unit**2)) * factor)
 
 
 def r2(y_true, y_pred):
@@ -493,10 +548,11 @@ def r2(y_true, y_pred):
     0.5
     """
     y_true, y_pred = _check_regression(y_true, y_pred)
-    ss_res = np.sum((y_true - y_pred) ** 2)
-    ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
-    if ss_tot == 0:
-        if ss_res == 0:
+    with np.errstate(over="ignore", under="ignore", invalid="ignore"):
+        ss_res = np.sum((y_true - y_pred) ** 2)
+        ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
+    if np.all(y_true == y_true.flat[0]):
+        if np.array_equal(y_true, y_pred):
             return 1.0
         warnings.warn(
             "r2 is ill-defined for constant y_true and is set to 0.0",
@@ -504,7 +560,22 @@ def r2(y_true, y_pred):
             stacklevel=2,
         )
         return 0.0
-    return float(1.0 - ss_res / ss_tot)
+    if np.isfinite(ss_res) and np.isfinite(ss_tot) and ss_tot > 0:
+        return float(1.0 - ss_res / ss_tot)
+    center = np.min(y_true) / 2 + np.max(y_true) / 2
+    shifted = y_true - center
+    peak_target = np.max(np.abs(shifted))
+    unit_target = shifted / peak_target
+    variance = np.mean((unit_target - unit_target.mean())**2)
+    unit, peak_error, factor = _scaled_residuals(y_true, y_pred)
+    if peak_error == 0:
+        return 1.0
+    log_ratio = (
+        2 * (np.log(peak_error) + np.log(factor) - np.log(peak_target))
+        + np.log(np.mean(unit**2)) - np.log(variance)
+    )
+    with np.errstate(over="ignore", under="ignore"):
+        return float(1.0 - np.exp(log_ratio))
 
 # ROC curve and AUC (bonus)
 
@@ -571,7 +642,7 @@ def roc_curve(y_true, y_score, pos_label=1):
     if np.unique(y_true).shape[0] > 2:
         raise ValueError("roc_curve only supports binary y_true")
 
-    positive = y_true == pos_label
+    positive = _positive_mask(y_true, pos_label)
     order = np.argsort(-y_score, kind="stable")
     score_sorted = y_score[order]
     positive_sorted = positive[order]

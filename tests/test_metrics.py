@@ -84,6 +84,29 @@ def test_accuracy_noncontiguous_input():
     assert accuracy(y[:, 0], y[:, 1]) == pytest.approx(2 / 3)
 
 
+def test_mixed_numeric_labels_preserve_exact_classes_and_positive_label():
+    large = 2**53
+    true = np.array([large, large + 1], dtype=np.int64)
+    pred = np.array([float(large), float(large)])
+    assert accuracy(true, pred) == 0.5
+    np.testing.assert_array_equal(confusion_matrix(true, pred), [[1, 0], [1, 0]])
+    np.testing.assert_array_equal(
+        confusion_matrix(true, pred, labels=true[::-1]), [[0, 1], [0, 1]]
+    )
+    assert recall(true, pred, pos_label=large + 1) == 0
+    assert f1(true, pred, average="micro") == 0.5
+    assert auc(*roc_curve(true, [.1, .9], pos_label=large + 1)[:2]) == 1
+
+
+def test_signed_unsigned_labels_and_explicit_label_type_validation():
+    true = np.array([-1, 2**63 - 1], dtype=np.int64)
+    pred = np.array([0, 2**63], dtype=np.uint64)
+    assert accuracy(true, pred) == 0
+    assert confusion_matrix(true, pred).shape == (4, 4)
+    with pytest.raises(TypeError, match="both be numeric or both be strings"):
+        confusion_matrix([0, 1], [0, 1], labels=["0", "1"])
+
+
 #  precision / recall / f1 
 
 
@@ -170,6 +193,16 @@ def test_regression_large_values_and_2d_input():
     y = np.array([[1e8, 2e8], [3e8, 4e8]])
     assert mse(y, y + 1.0) == pytest.approx(1.0)
     assert mae(y.T, y.T) == 0.0
+
+
+def test_regression_extremes_reduce_before_rescaling():
+    assert mse([1.5e154, 0], [0, 0]) == pytest.approx(1.125e308)
+    assert rmse([1e200], [0]) == pytest.approx(1e200)
+    assert mae([1e308, 1e308], [0, 0]) == 1e308
+    assert np.isinf(mse([1e200], [0]))
+    maximum = np.finfo(float).max
+    assert rmse([maximum, 0, 0, 0], [-maximum, 0, 0, 0]) == maximum
+    assert r2([1e200, 2e200, 3e200], [3e200, 2e200, 1e200]) == pytest.approx(-3)
 
 
 def test_r2_constant_target():
