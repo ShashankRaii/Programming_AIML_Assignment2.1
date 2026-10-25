@@ -24,8 +24,8 @@ __all__ = [
 ]
 
 
-class NotFittedError(ValueError, AttributeError):
-    """Raised when transform/predict is called before fit."""
+class NotFittedError(RuntimeError, ValueError, AttributeError):
+    """Pre-fit error; also retains ValueError/AttributeError compatibility."""
 
 class _ParamsMixin:
     """get_params, a readable repr and the fitted/shape checks."""
@@ -77,7 +77,7 @@ class BaseTransformer(_ParamsMixin):
         Returns
         X_out : ndarray, shape (n_samples, n_features_out)
         """
-        return self.fit(X, y).transform(X)
+        return _call_fit(self.fit, X, y).transform(X)
 
 
 class BaseEstimator(_ParamsMixin):
@@ -94,10 +94,26 @@ def _has(obj, method):
     return callable(getattr(obj, method, None))
 
 
+def _call_fit(method, X, y):
+    """Bind the protocol before calling it; never retry an internal TypeError."""
+    try:
+        signature = inspect.signature(method)
+    except (TypeError, ValueError) as exc:
+        raise TypeError("fit methods must expose an inspectable Python signature") from exc
+    candidates = [((X, y), {}), ((X,), {"y": y}), ((X,), {})]
+    for args, kwargs in candidates:
+        try:
+            signature.bind(*args, **kwargs)
+        except TypeError:
+            continue
+        return method(*args, **kwargs)
+    raise TypeError("fit method must accept X, optionally with a target y")
+
+
 def _fit_transform_one(step, X, y):
     if _has(step, "fit_transform"):
-        return step.fit_transform(X, y)
-    return step.fit(X, y).transform(X)
+        return _call_fit(step.fit_transform, X, y)
+    return _call_fit(step.fit, X, y).transform(X)
 
 
 def _validate_named_steps(steps, owner):
@@ -186,9 +202,11 @@ class Pipeline(_ParamsMixin):
         Returns
         self : Pipeline
         """
+        self.__dict__.pop("fitted_", None)
         for _, step in self.steps[:-1]:
             X = _fit_transform_one(step, X, y)
-        self.steps[-1][1].fit(X, y)
+        _call_fit(self.steps[-1][1].fit, X, y)
+        self.fitted_ = True
         return self
 
     def fit_transform(self, X, y=None):
@@ -198,12 +216,15 @@ class Pipeline(_ParamsMixin):
         TypeError
             If the last step has no transform (e.g. it is an estimator).
         """
+        self.__dict__.pop("fitted_", None)
         last_name, last = self.steps[-1]
         if not _has(last, "transform"):
             raise TypeError(f"final step {last_name!r} has no transform; use fit/predict")
         for _, step in self.steps[:-1]:
             X = _fit_transform_one(step, X, y)
-        return _fit_transform_one(last, X, y)
+        result = _fit_transform_one(last, X, y)
+        self.fitted_ = True
+        return result
 
     def transform(self, X):
         """Pass X through every fitted step.
@@ -214,6 +235,7 @@ class Pipeline(_ParamsMixin):
         NotFittedError
             If the pipeline has not been fitted.
         """
+        self._check_is_fitted("fitted_")
         last_name, last = self.steps[-1]
         if not _has(last, "transform"):
             raise TypeError(f"final step {last_name!r} has no transform; use predict")
@@ -226,6 +248,7 @@ class Pipeline(_ParamsMixin):
         TypeError
             If the last step has no predict.
         """
+        self._check_is_fitted("fitted_")
         last_name, last = self.steps[-1]
         if not _has(last, "predict"):
             raise TypeError(f"final step {last_name!r} has no predict; use transform")
@@ -263,6 +286,8 @@ class FeatureUnion(BaseTransformer):
     @staticmethod
     def _stack(blocks):
         blocks = [np.asarray(block) for block in blocks]
+        if any(block.ndim not in (1, 2) for block in blocks):
+            raise ValueError("transformer outputs must be 1-D or 2-D arrays")
         blocks = [block.reshape(-1, 1) if block.ndim == 1 else block for block in blocks]
         rows = {block.shape[0] for block in blocks}
         if len(rows) > 1:
@@ -270,8 +295,9 @@ class FeatureUnion(BaseTransformer):
         return np.hstack(blocks)
 
     def fit(self, X, y=None):
+        self.__dict__.pop("n_transformers_", None)
         for _, step in self.transformer_list:
-            step.fit(X, y)
+            _call_fit(step.fit, X, y)
         self.n_transformers_ = len(self.transformer_list)
         return self
 
@@ -281,9 +307,11 @@ class FeatureUnion(BaseTransformer):
         return self._stack([step.transform(X) for _, step in self.transformer_list])
 
     def fit_transform(self, X, y=None):
+        self.__dict__.pop("n_transformers_", None)
         blocks = [_fit_transform_one(step, X, y) for _, step in self.transformer_list]
+        result = self._stack(blocks)
         self.n_transformers_ = len(self.transformer_list)
-        return self._stack(blocks)
+        return result
 
 
 class MeanRegressor(BaseEstimator):

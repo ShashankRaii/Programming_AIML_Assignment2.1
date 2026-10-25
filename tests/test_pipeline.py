@@ -86,6 +86,71 @@ def test_pipeline_custom_transformer():
     np.testing.assert_array_equal(pipe.fit_transform(np.array([[1]])), [[3]])
 
 
+@pytest.mark.parametrize("compose", [Pipeline, FeatureUnion])
+@pytest.mark.parametrize("method", ["fit", "fit_transform"])
+def test_minimal_fit_x_protocol(compose, method):
+    class Minimal:
+        def fit(self, X):
+            return self
+
+        def transform(self, X):
+            return np.asarray(X) + 1
+
+    obj = compose([("minimal", Minimal())])
+    getattr(obj, method)([[1.0]], [0])
+    np.testing.assert_array_equal(obj.transform([[2.0]]), [[3.0]])
+
+
+def test_keyword_only_y_and_fit_transform_x_protocol():
+    class KeywordTarget:
+        def fit(self, X, *, y):
+            self.target = y
+            return self
+
+        def transform(self, X):
+            return np.asarray(X)
+
+    step = KeywordTarget()
+    Pipeline([("step", step)]).fit([[1]], [9])
+    assert step.target == [9]
+
+    class Direct(AddOne):
+        def fit_transform(self, X):
+            return self.fit(X).transform(X)
+
+    np.testing.assert_array_equal(Pipeline([("step", Direct())]).fit_transform([[1]]), [[2]])
+
+
+def test_internal_type_error_is_not_retried():
+    class Broken(AddOne):
+        calls = 0
+
+        def fit(self, X, y=None):
+            self.calls += 1
+            raise TypeError("error inside fit")
+
+    step = Broken()
+    with pytest.raises(TypeError, match="error inside fit"):
+        Pipeline([("broken", step)]).fit([[1]])
+    assert step.calls == 1
+
+
+def test_pipeline_requires_its_own_fit_and_runtime_error_contract():
+    assert issubclass(NotFittedError, RuntimeError)
+    step = AddOne().fit([[1]])
+    with pytest.raises(NotFittedError):
+        Pipeline([("step", step)]).transform([[1]])
+
+
+def test_union_rejects_scalar_and_three_dimensional_outputs():
+    class BadShape(AddOne):
+        def transform(self, X):
+            return np.zeros((1, 1, 1))
+
+    with pytest.raises(ValueError, match="1-D or 2-D"):
+        FeatureUnion([("bad", BadShape())]).fit_transform([[1]])
+
+
 @pytest.mark.parametrize(
     "steps, err, msg",
     [
