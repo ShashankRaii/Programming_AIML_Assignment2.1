@@ -160,6 +160,31 @@ def test_chunks_match_full_load(write_file):
     )
 
 
+def test_integer_missing_rows_skip_without_float_conversion(write_file):
+    big = 2**53 + 1
+    path = write_file(f"{big},2\n,3\n4,5\n")
+    expected = np.array([[big, 2], [4, 5]], dtype=np.int64)
+    np.testing.assert_array_equal(load_csv(path, dtype=np.int64, missing="skip"), expected)
+    chunks = list(load_csv_chunks(path, 1, dtype=np.int64, missing="skip"))
+    np.testing.assert_array_equal(np.vstack(chunks), expected)
+    np.testing.assert_array_equal(load_csv(path, dtype=int, fill_value=-1)[1], [-1, 3])
+
+
+def test_integer_missing_fill_requires_representable_value(write_file):
+    path = write_file("1,\n2,3\n")
+    with pytest.raises(ValueError, match="fill_value"):
+        load_csv(path, dtype=int)
+    with pytest.raises(ValueError, match="fill_value"):
+        load_csv(path, dtype=np.uint8, fill_value=-1)
+    assert load_csv(write_file("1,2\n"), dtype=int).dtype.kind == "i"
+
+
+def test_string_missing_fill_and_skip_preserve_text(write_file):
+    path = write_file("Adelaide,\nPerth,blue\n")
+    np.testing.assert_array_equal(load_csv(path, dtype=str, missing="skip"), [["Perth", "blue"]])
+    assert load_csv(path, dtype=str)[0, 1] == ""
+
+
 def test_chunk_larger_than_file(write_file):
     chunks = list(load_csv_chunks(write_file(BASIC), 100, skip_header=1))
     assert len(chunks) == 1 and chunks[0].shape == (2, 3)
